@@ -1,0 +1,4 @@
+rootProject.name = 'gravitas'
+
+include 'core'
+include 'desktop'
