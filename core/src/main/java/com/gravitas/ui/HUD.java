@@ -172,6 +172,7 @@ public class HUD {
                 "V           toggle visual scale",
                 "T           toggle orbit predict",
                 "M           measure distance",
+                "X           toggle celestial FX",
                 "H           hide/show Help",
                 "Q           quit",
         };

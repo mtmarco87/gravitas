@@ -119,7 +119,7 @@ public class OrbitPredictor {
             return null; // near-hyperbolic → skip
 
         double b = a * Math.sqrt(1.0 - e * e); // semi-minor axis
-        double omega = Math.atan2(ey, ex); // argument of periapsis
+        double omega = Math.atan2(ey, ex); // 2D longitude of periapsis (eccentricity-vector direction)
         // Centre of ellipse: focus (parent) is at distance a*e from centre.
         double cx = parent.x - a * e * Math.cos(omega);
         double cy = parent.y - a * e * Math.sin(omega);

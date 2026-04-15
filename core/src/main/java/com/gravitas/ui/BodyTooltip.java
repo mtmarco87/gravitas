@@ -6,6 +6,7 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.gravitas.entities.BeltData;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 import com.gravitas.physics.PhysicsEngine;
@@ -46,6 +47,7 @@ public class BodyTooltip {
     private final PhysicsEngine physics;
     private final ShapeRenderer shapeRenderer;
     private final GlyphLayout layout = new GlyphLayout();
+    private List<BeltData> belts = List.of();
 
     public BodyTooltip(FontManager fontManager, WorldCamera camera, PhysicsEngine physics,
             ShapeRenderer shapeRenderer) {
@@ -53,6 +55,10 @@ public class BodyTooltip {
         this.camera = camera;
         this.physics = physics;
         this.shapeRenderer = shapeRenderer;
+    }
+
+    public void setBelts(List<BeltData> belts) {
+        this.belts = belts;
     }
 
     /**
@@ -67,10 +73,15 @@ public class BodyTooltip {
         int mouseYFlipped = screenHeight - mouseY;
 
         SimObject hovered = findHovered(mouseX, mouseYFlipped, physics.getObjects());
-        if (hovered == null)
-            return;
-
-        String[] lines = buildLines(hovered);
+        String[] lines;
+        if (hovered != null) {
+            lines = buildLines(hovered);
+        } else {
+            BeltData belt = findHoveredBelt(mouseX, mouseYFlipped);
+            if (belt == null)
+                return;
+            lines = buildBeltLines(belt);
+        }
 
         // Split each line into [label, value] on the tab character.
         // Title row (index 0) has no tab — it spans full width.
@@ -311,6 +322,51 @@ public class BodyTooltip {
         if (!suffix.isEmpty()) {
             font.draw(batch, suffix, cx, y);
         }
+    }
+
+    private BeltData findHoveredBelt(int mouseX, int mouseYFlipped) {
+        double[] worldPos = camera.screenToWorld(mouseX, mouseYFlipped);
+        double mx = worldPos[0];
+        double my = worldPos[1];
+
+        for (BeltData belt : belts) {
+            // Find parent body position.
+            double px = 0, py = 0;
+            for (SimObject obj : physics.getObjects()) {
+                if (obj.name.equals(belt.parentName)) {
+                    px = obj.x;
+                    py = obj.y;
+                    break;
+                }
+            }
+            double dx = mx - px;
+            double dy = my - py;
+            double dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist >= belt.innerRadius && dist <= belt.outerRadius) {
+                return belt;
+            }
+        }
+        return null;
+    }
+
+    private String[] buildBeltLines(BeltData belt) {
+        String displayName;
+        if (belt.name.equals("AsteroidBelt"))
+            displayName = "Main Asteroid Belt";
+        else if (belt.name.equals("KuiperBelt"))
+            displayName = "Kuiper Belt";
+        else
+            displayName = belt.name;
+
+        double innerAU = belt.innerRadius / AU;
+        double outerAU = belt.outerRadius / AU;
+        double widthAU = outerAU - innerAU;
+        return new String[] {
+                displayName + "  [Belt]",
+                "Inner edge\t" + String.format("%.2f AU", innerAU),
+                "Outer edge\t" + String.format("%.2f AU", outerAU),
+                "Width\t" + String.format("%.2f AU", widthAU),
+        };
     }
 
     private String capitalize(String s) {

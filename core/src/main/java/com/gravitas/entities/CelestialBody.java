@@ -23,6 +23,17 @@ public class CelestialBody extends SimObject {
     /** Colour for 2D rendering (RGBA packed int, libGDX convention). */
     public int displayColor;
 
+    /**
+     * Texture filename relative to the stellar system textures folder (e.g.
+     * "earth.jpg"). Null = use flat colour.
+     */
+    public String textureFile;
+
+    /**
+     * Atmosphere glow colour (RGBA packed int). Null/0 = derive from displayColor.
+     */
+    public int atmosphereGlowColor;
+
     /** The body this object orbits (null for the star). */
     public CelestialBody parent;
 
@@ -35,17 +46,45 @@ public class CelestialBody extends SimObject {
     /** Orbital inclination — ignored in 2D mode, stored for future 3D. */
     public double inclination;
 
+    /**
+     * Longitude of ascending node (Ω) — ignored in 2D mode, stored for future 3D.
+     */
+    public double longitudeOfAscendingNode;
+
     /** Mean anomaly at epoch (radians). */
     public double meanAnomalyAtEpoch;
 
-    /** Argument of periapsis (radians). */
+    /** Argument of periapsis ω (radians). Longitude of periapsis is Ω + ω. */
     public double argumentOfPeriapsis;
+
+    /** Ring inner radius from body centre (meters). 0 = no rings. */
+    public double ringInnerRadius;
+
+    /** Ring outer radius from body centre (meters). 0 = no rings. */
+    public double ringOuterRadius;
+
+    /**
+     * Ring texture filename (e.g. "saturn_rings.png"). Null = procedural colour.
+     */
+    public String ringTexture;
+
+    /** Ring base colour for procedural rings (RGBA packed int). */
+    public int ringColor;
+
+    /** Ring opacity [0,1]. */
+    public float ringOpacity;
 
     /** Rotation period around own axis (seconds). Negative = retrograde. */
     public double rotationPeriod;
 
     /** Current axial rotation angle (radians), updated each tick. */
     public double rotationAngle;
+
+    /** Whether to render a procedural cloud layer over this body. */
+    public boolean cloudLayer;
+
+    /** Cloud colour (RGBA packed int). White = realistic Earth clouds. */
+    public int cloudColor;
 
     public CelestialBody(String name, BodyType bodyType, double mass, double radius) {
         super(name, mass, radius);
@@ -62,6 +101,10 @@ public class CelestialBody extends SimObject {
 
     public boolean hasAtmosphere() {
         return atmosphereScaleHeight > 0 && atmosphereDensitySeaLevel > 0;
+    }
+
+    public boolean hasRings() {
+        return ringInnerRadius > 0 && ringOuterRadius > 0;
     }
 
     /**

@@ -17,6 +17,7 @@ import com.gravitas.ui.BodyTooltip;
 import com.gravitas.ui.GravitasInputProcessor;
 import com.gravitas.ui.HUD;
 import com.gravitas.ui.MeasureTool;
+import com.gravitas.audio.MusicPlayer;
 
 /**
  * Main libGDX application class — entry point for the Gravitas simulation.
@@ -43,6 +44,7 @@ public class GravitasGame extends ApplicationAdapter {
     private GravitasInputProcessor inputProcessor;
     private MeasureTool measureTool;
     private FontManager fontManager;
+    private MusicPlayer musicPlayer;
 
     private SpriteBatch spriteBatch;
     private ShapeRenderer shapeRenderer;
@@ -78,19 +80,32 @@ public class GravitasGame extends ApplicationAdapter {
 
         // --- Renderer ---
         simRenderer = new SimRenderer(shapeRenderer, worldCamera);
+        simRenderer.initCelestialBodyRenderer("solar_system");
+        simRenderer.setBelts(loader.getBelts());
         orbitPredictor = new OrbitPredictor(shapeRenderer, worldCamera);
 
         // --- Input ---
         inputProcessor = new GravitasInputProcessor(physics, worldCamera, orbitPredictor);
+        inputProcessor.setSimRenderer(simRenderer);
         Gdx.input.setInputProcessor(inputProcessor);
 
         // --- HUD + Tooltip ---
         hud = new HUD(fontManager, physics, worldCamera, inputProcessor, shapeRenderer);
         bodyTooltip = new BodyTooltip(fontManager, worldCamera, physics, shapeRenderer);
+        bodyTooltip.setBelts(loader.getBelts());
 
         // --- Measure tool ---
         measureTool = new MeasureTool(worldCamera, shapeRenderer, fontManager);
         inputProcessor.setMeasureTool(measureTool);
+
+        // --- Music ---
+        musicPlayer = new MusicPlayer(
+                "music/01 To The Great Beyond.ogg",
+                "music/02 Breathe In The Light.ogg",
+                "music/03 Rendezvous With Rama.ogg",
+                "music/04 Northern Lights.ogg",
+                "music/05 Between The Rings.ogg");
+        musicPlayer.play();
 
         Gdx.app.log("Gravitas", "Initialised. " + physics.getObjects().size() + " bodies loaded.");
     }
@@ -102,6 +117,9 @@ public class GravitasGame extends ApplicationAdapter {
     @Override
     public void render() {
         float dt = Gdx.graphics.getDeltaTime();
+
+        // 0. Update music (fade-in, track advancement).
+        musicPlayer.update(dt);
 
         // 1. Advance physics.
         physics.update(dt);
@@ -118,6 +136,9 @@ public class GravitasGame extends ApplicationAdapter {
         // Sync visual-scale mode from input state.
         simRenderer.setVisualScaleMode(inputProcessor.isVisualScaleMode());
 
+        // Sync celestial FX toggle.
+        simRenderer.setCelestialFx(inputProcessor.isCelestialFx());
+
         // Sync orbit predictor toggle.
         orbitPredictor.setEnabled(inputProcessor.isShowOrbitPredictors());
 
@@ -129,7 +150,7 @@ public class GravitasGame extends ApplicationAdapter {
         // 4. Clear screen + draw starfield background.
         Gdx.gl.glClearColor(0, 0, 0, 1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-        starfield.render(spriteBatch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        starfield.render(spriteBatch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), dt);
 
         // 5. Enable blending for trail alpha.
         Gdx.gl.glEnable(GL20.GL_BLEND);
@@ -143,7 +164,8 @@ public class GravitasGame extends ApplicationAdapter {
         orbitPredictor.render(physics.getObjects(), physics.getTimeWarpFactor());
 
         // 6b. Render simulation (trails + bodies, on top of predictors).
-        simRenderer.render(physics.getObjects());
+        double simDt = dt * physics.getTimeWarpFactor();
+        simRenderer.render(physics.getObjects(), simDt);
 
         // 6c. Measure tool (dashed line + label).
         spriteBatch.getProjectionMatrix().setToOrtho2D(0, 0,
@@ -173,6 +195,8 @@ public class GravitasGame extends ApplicationAdapter {
 
     @Override
     public void dispose() {
+        musicPlayer.dispose();
+        simRenderer.dispose();
         starfield.dispose();
         spriteBatch.dispose();
         shapeRenderer.dispose();

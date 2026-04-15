@@ -7,6 +7,8 @@ import com.badlogic.gdx.math.Vector2;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.physics.PhysicsEngine;
 import com.gravitas.rendering.OrbitPredictor;
+import com.gravitas.rendering.OrbitTrail;
+import com.gravitas.rendering.SimRenderer;
 import com.gravitas.rendering.WorldCamera;
 
 /**
@@ -35,6 +37,7 @@ public class GravitasInputProcessor extends InputAdapter {
     private final PhysicsEngine physics;
     private final WorldCamera camera;
     private final OrbitPredictor orbitPredictor;
+    private SimRenderer simRenderer;
     private MeasureTool measureTool;
 
     private boolean paused = false;
@@ -43,6 +46,7 @@ public class GravitasInputProcessor extends InputAdapter {
     // Toggleable modes (read by SimRenderer / OrbitPredictor via accessors)
     private boolean visualScaleMode = true;
     private boolean showOrbitPredictors = false;
+    private boolean celestialFx = true;
 
     // Left-mouse pan state.
     private boolean leftDragging = false;
@@ -84,6 +88,7 @@ public class GravitasInputProcessor extends InputAdapter {
             case Input.Keys.NUM_0 -> setWarp(WARP_PRESETS[9]);
             case Input.Keys.V -> visualScaleMode = !visualScaleMode;
             case Input.Keys.T -> showOrbitPredictors = !showOrbitPredictors;
+            case Input.Keys.X -> celestialFx = !celestialFx;
             case Input.Keys.F -> camera.clearFollow();
             case Input.Keys.Q -> Gdx.app.exit();
             case Input.Keys.M -> {
@@ -221,6 +226,39 @@ public class GravitasInputProcessor extends InputAdapter {
         return bestBody;
     }
 
+    /**
+     * Hit-test against recorded orbit trails. Returns the body whose trail
+     * passes closest to the click within ORBIT_HIT_PX, or null.
+     */
+    private CelestialBody findBodyOnTrail(int screenX, int screenY) {
+        if (simRenderer == null)
+            return null;
+        float sySrc = Gdx.graphics.getHeight() - screenY;
+        float bestDistSq = ORBIT_HIT_PX * ORBIT_HIT_PX;
+        CelestialBody bestBody = null;
+
+        for (var obj : physics.getObjects()) {
+            if (!(obj instanceof CelestialBody cb) || !cb.active)
+                continue;
+            OrbitTrail trail = simRenderer.getTrail(obj.id);
+            if (trail == null || trail.pointCount() < 2)
+                continue;
+
+            float[] coords = new float[trail.pointCount() * 2];
+            int n = trail.toScreenCoords(camera, coords);
+            for (int i = 0; i < n - 1; i++) {
+                float distSq = pointToSegmentDistSq(screenX, sySrc,
+                        coords[i * 2], coords[i * 2 + 1],
+                        coords[(i + 1) * 2], coords[(i + 1) * 2 + 1]);
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    bestBody = cb;
+                }
+            }
+        }
+        return bestBody;
+    }
+
     /** Squared distance from point (px,py) to segment (ax,ay)-(bx,by). */
     private static float pointToSegmentDistSq(float px, float py,
             float ax, float ay, float bx, float by) {
@@ -307,6 +345,8 @@ public class GravitasInputProcessor extends InputAdapter {
                     CelestialBody target = findBodyAt(screenX, screenY);
                     if (target == null)
                         target = findBodyOnOrbit(screenX, screenY);
+                    if (target == null)
+                        target = findBodyOnTrail(screenX, screenY);
                     if (target != null) {
                         camera.setFollowTarget(target);
                         camera.startSmoothZoomTo(target.radius);
@@ -318,6 +358,8 @@ public class GravitasInputProcessor extends InputAdapter {
                     CelestialBody target = findBodyAt(screenX, screenY);
                     if (target == null)
                         target = findBodyOnOrbit(screenX, screenY);
+                    if (target == null)
+                        target = findBodyOnTrail(screenX, screenY);
                     pendingSingleTapBody = target;
                     pendingSingleTapMs = now;
                     lastTapTimeMs = now;
@@ -367,6 +409,14 @@ public class GravitasInputProcessor extends InputAdapter {
 
     public boolean isShowOrbitPredictors() {
         return showOrbitPredictors;
+    }
+
+    public boolean isCelestialFx() {
+        return celestialFx;
+    }
+
+    public void setSimRenderer(SimRenderer renderer) {
+        this.simRenderer = renderer;
     }
 
     public void setMeasureTool(MeasureTool tool) {

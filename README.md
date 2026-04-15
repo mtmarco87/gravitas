@@ -38,7 +38,7 @@ The project is designed for interactively exploring orbital mechanics: follow pl
 - ✅ **N-body simulation** with adaptive RK4 integrator (variable timestep and step count)
 - ✅ **Complete solar system** — Sun, 8 planets, dwarf planets, major moons (23 bodies)
 - ✅ **Time warp** from 1× to 1,000,000,000× with 10 presets (keys 1–0)
-- ✅ **Intelligent visual scale** — power-law sizing with overlap detection, hysteresis, and tolerance
+- ✅ **Intelligent visual scale** — logarithmic / power-law sizing with overlap detection, hysteresis, and tolerance
 - ✅ **Orbit trails** with progressive alpha fade
 - ✅ **Orbit predictors** (Keplerian ellipses with EMA smoothing)
 - ✅ **Follow camera** — double-click a body to track it
@@ -165,7 +165,7 @@ The application starts with the solar system loaded from `assets/data/solar_syst
 2. **Orbit predictors** — Keplerian ellipses computed from EMA-smoothed orbital elements
 3. **Orbit trails** — polylines with alpha fade (newest → oldest)
 4. **Celestial bodies** — filled circles with glow ring for stars
-5. **Visual scale** — power-law (`0.65 × radius_km^0.25`) with latched overlap detection + 9px tolerance
+5. **Visual scale** — logarithmic (`1.6 × ln(radius_km) − 10.5`) or power-law (`0.65 × radius_km^0.21`), switchable, with latched overlap detection
 6. **Moon skip** — moons hidden when overlapping parent at similar pixel size
 7. **HUD + Tooltip** — SpriteBatch overlay with FreeType font
 
@@ -175,14 +175,16 @@ Celestial bodies are defined in `assets/data/solar_system.json` using Keplerian 
 
 - `semiMajorAxis` — semi-major axis (m)
 - `eccentricity` — orbital eccentricity
-- `meanAnomaly` — mean anomaly at J2000 (degrees)
-- `argPerihelion` — argument of perihelion (degrees)
+- `inclination` — inclination (radians)
+- `longitudeOfAscendingNode` — longitude of ascending node $\Omega$ (radians)
+- `meanAnomalyAtEpoch` — mean anomaly at J2000 (radians)
+- `argumentOfPeriapsis` — argument of periapsis $\omega$ (radians)
 - `mass` — mass (kg)
 - `radius` — equatorial radius (m)
 - `color` — RGBA hex color
 - `parent` — parent body (for moons)
 
-The loader converts orbital elements to Cartesian position/velocity via Kepler's equation (Newton-Raphson) and the vis-viva formula.
+In the current 2D bootstrap, the loader derives the in-plane longitude of periapsis as $\varpi = \Omega + \omega$ and then converts the Keplerian state to Cartesian position and velocity.
 
 ## FAQs
 
@@ -209,10 +211,18 @@ The moon-skip logic hides moons when they overlap their parent at similar pixel 
 Parameters are at the top of `SimRenderer.java`:
 
 ```java
-VS_BASE = 0.65f;                // Scale coefficient
-VS_EXP = 0.25f;                 // Power-law exponent (0.25 = fourth root)
-VISUAL_SCALE_MIN_PX = 2f;       // Minimum pixel floor
-VS_OVERLAP_TOLERANCE_PX = 9f;   // Overlap tolerance before inhibiting V
+LOGARITHMIC_SCALE = true;        // true = log, false = power-law
+
+// Logarithmic mode
+VS_LOG_A = 1.6f;                 // Log coefficient
+VS_LOG_B = -10.5f;               // Log offset
+
+// Power-law mode
+VS_POW_BASE = 0.65f;             // Scale coefficient
+VS_POW_EXP = 0.21f;              // Power-law exponent
+
+VISUAL_SCALE_MIN_PX = 2f;        // Minimum pixel floor
+VS_OVERLAP_TOLERANCE_PX = 3f;    // Overlap tolerance before inhibiting V
 ```
 
 ### Adding Celestial Bodies
@@ -228,8 +238,10 @@ Add a new object to `assets/data/solar_system.json`:
   "color": "FF8800FF",
   "semiMajorAxis": 3.0e11,
   "eccentricity": 0.05,
-  "meanAnomaly": 45.0,
-  "argPerihelion": 90.0
+  "inclination": 0.02,
+  "longitudeOfAscendingNode": 1.1,
+  "meanAnomalyAtEpoch": 0.8,
+  "argumentOfPeriapsis": 0.4
 }
 ```
 

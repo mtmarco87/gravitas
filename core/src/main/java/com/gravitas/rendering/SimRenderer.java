@@ -3,12 +3,15 @@ package com.gravitas.rendering;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
+import com.gravitas.entities.BeltData;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * Renders all SimObjects in 2D using libGDX ShapeRenderer.
@@ -29,23 +32,36 @@ public class SimRenderer {
     private static final float TRAIL_ALPHA_MIN = 0.05f;
 
     /**
-     * Visual-scale power-law parameters. When V is ON, the display radius is:
-     * max(VISUAL_SCALE_MIN_PX, VS_BASE * (radius_km ^ VS_EXP))
-     * This compresses real radii into a legible pixel range while preserving
-     * proportional differences (Sun >> Jupiter > Earth > Moon).
+     * Visual-scale mode selector.
+     * true = logarithmic: VS_LOG_A * ln(radius_km) + VS_LOG_B
+     * false = power-law: VS_POW_BASE * (radius_km ^ VS_POW_EXP)
      */
-    private static final float VS_BASE = 0.65f;
-    private static final float VS_EXP = 0.21f;
+    private static final boolean LOGARITHMIC_SCALE = true;
+
+    // --- Logarithmic params ---
+    private static final float VS_LOG_A = 1.7f;
+    private static final float VS_LOG_B = -10.5f;
+
+    // --- Power-law params ---
+    private static final float VS_POW_BASE = 0.45f;
+    private static final float VS_POW_EXP = 0.25f;
+
     private static final float VISUAL_SCALE_MIN_PX = 2f;
     /**
      * Pixel tolerance for the primary-body overlap check. Visual scale stays ON
      * as long as two primaries overlap by less than this many pixels.
      */
-    private static final float VS_OVERLAP_TOLERANCE_PX = 9f;
+    private static final float VS_OVERLAP_TOLERANCE_PX = 3f;
 
     private final ShapeRenderer shapeRenderer;
     private final WorldCamera camera;
     private final Map<String, OrbitTrail> trails = new HashMap<>();
+
+    /**
+     * Texture-based celestial body renderer (handles spherical projection,
+     * rotation, glow).
+     */
+    private CelestialBodyRenderer celestialBodyRenderer;
 
     /** When true, body radii are exaggerated for visibility. */
     private boolean visualScaleMode = true;
@@ -61,13 +77,87 @@ public class SimRenderer {
     /** Scratch arrays re-used each frame to avoid allocation. */
     private float[] trailCoords = new float[OrbitTrail.DEFAULT_CAPACITY * 2];
 
+    /** Statistical belts (asteroid belt, Kuiper belt). */
+    private final List<BeltParticles> beltParticles = new ArrayList<>();
+
+    /** Pre-generated belt particle positions in world metres. */
+    private static class BeltParticles {
+        final double[] angle; // current orbital angle (radians)
+        final double[] radius; // orbital radius (metres)
+        final double[] angVel; // angular velocity (rad/s) from Kepler: sqrt(GM/r³)
+        final Color color;
+        final int count;
+        final String parentName; // name of parent body this belt orbits
+
+        // GM_Sun (m³/s²)
+        private static final double GM_SUN = 1.32712440018e20;
+
+        BeltParticles(BeltData belt) {
+            this.count = belt.particleCount;
+            this.parentName = belt.parentName;
+            this.angle = new double[count];
+            this.radius = new double[count];
+            this.angVel = new double[count];
+            int rgba = belt.color;
+            float r = ((rgba >> 24) & 0xFF) / 255f;
+            float g = ((rgba >> 16) & 0xFF) / 255f;
+            float b = ((rgba >> 8) & 0xFF) / 255f;
+            this.color = new Color(r, g, b, 1f);
+
+            // Deterministic scatter within the annulus.
+            Random rng = new Random(belt.name.hashCode());
+            for (int i = 0; i < count; i++) {
+                angle[i] = rng.nextDouble() * 2.0 * Math.PI;
+                // Uniform distribution in area: r = sqrt(rand * (R²-r²) + r²)
+                double r2Inner = belt.innerRadius * belt.innerRadius;
+                double r2Outer = belt.outerRadius * belt.outerRadius;
+                radius[i] = Math.sqrt(rng.nextDouble() * (r2Outer - r2Inner) + r2Inner);
+                // Kepler: ω = sqrt(GM / r³)
+                angVel[i] = Math.sqrt(GM_SUN / (radius[i] * radius[i] * radius[i]));
+            }
+        }
+
+        /** Advance all particle angles by simDt seconds of simulation time. */
+        void advance(double simDt) {
+            for (int i = 0; i < count; i++) {
+                angle[i] += angVel[i] * simDt;
+            }
+        }
+    }
+
+    /**
+     * Supplies belt data for rendering. Call once after loading.
+     */
+    public void setBelts(List<BeltData> belts) {
+        beltParticles.clear();
+        for (BeltData b : belts) {
+            beltParticles.add(new BeltParticles(b));
+        }
+    }
+
     public SimRenderer(ShapeRenderer shapeRenderer, WorldCamera camera) {
         this.shapeRenderer = shapeRenderer;
         this.camera = camera;
     }
 
+    /**
+     * Initialises the texture-based planet renderer for a specific stellar system.
+     * Must be called after libGDX GL context is ready (i.e. inside create()).
+     * 
+     * @param systemFolder folder name under assets/textures/ (e.g. "solar_system")
+     */
+    public void initCelestialBodyRenderer(String systemFolder) {
+        celestialBodyRenderer = new CelestialBodyRenderer(camera, systemFolder);
+    }
+
     public void setVisualScaleMode(boolean enabled) {
         this.visualScaleMode = enabled;
+    }
+
+    public void setCelestialFx(boolean enabled) {
+        if (celestialBodyRenderer != null) {
+            celestialBodyRenderer.setCelestialFx(enabled);
+        }
     }
 
     public boolean isVisualScaleMode() {
@@ -91,9 +181,58 @@ public class SimRenderer {
     // Called each render frame
     // -------------------------------------------------------------------------
 
-    public void render(List<SimObject> objects) {
+    public void render(List<SimObject> objects, double simDt) {
+        renderBelts(simDt, objects);
         renderTrails(objects);
         renderBodies(objects);
+    }
+
+    // -------------------------------------------------------------------------
+    // Belt rendering
+    // -------------------------------------------------------------------------
+
+    private void renderBelts(double simDt, List<SimObject> objects) {
+        if (beltParticles.isEmpty())
+            return;
+
+        // Advance orbital angles
+        for (BeltParticles bp : beltParticles) {
+            bp.advance(simDt);
+        }
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        float mpp = camera.getMetersPerPixel();
+
+        for (BeltParticles bp : beltParticles) {
+            // Find the parent body this belt orbits around.
+            double parentX = 0, parentY = 0;
+            for (SimObject obj : objects) {
+                if (obj.name.equals(bp.parentName)) {
+                    parentX = obj.x;
+                    parentY = obj.y;
+                    break;
+                }
+            }
+
+            for (int i = 0; i < bp.count; i++) {
+                double wx = parentX + bp.radius[i] * Math.cos(bp.angle[i]);
+                double wy = parentY + bp.radius[i] * Math.sin(bp.angle[i]);
+                float sx = (float) ((wx - camera.getFocusX()) / mpp)
+                        + camera.getCamera().viewportWidth * 0.5f;
+                float sy = (float) ((wy - camera.getFocusY()) / mpp)
+                        + camera.getCamera().viewportHeight * 0.5f;
+
+                // Frustum cull: skip particles outside the screen.
+                if (sx < -2 || sx > camera.getCamera().viewportWidth + 2
+                        || sy < -2 || sy > camera.getCamera().viewportHeight + 2) {
+                    continue;
+                }
+
+                shapeRenderer.setColor(bp.color.r, bp.color.g, bp.color.b, 0.35f);
+                shapeRenderer.circle(sx, sy, 1.2f, 4);
+            }
+        }
+        shapeRenderer.end();
     }
 
     // -------------------------------------------------------------------------
@@ -201,10 +340,23 @@ public class SimRenderer {
             objIndex.put(objects.get(i), i);
         }
 
+        // --- Texture pass: render textured planets (atmosphere glow + surfaces) ---
+        boolean[] textured = null;
+        if (celestialBodyRenderer != null) {
+            textured = celestialBodyRenderer.render(objects, sx, sy, sr);
+        }
+
+        // --- Shape pass: flat-colour circles for bodies not handled by
+        // CelestialBodyRenderer ---
+        // ---
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         for (int i = 0; i < n; i++) {
             SimObject obj = objects.get(i);
             if (!obj.active)
+                continue;
+
+            // Skip bodies already rendered with textures.
+            if (textured != null && textured[i])
                 continue;
 
             // Skip a moon that visually overlaps its parent and is comparable in
@@ -277,8 +429,8 @@ public class SimRenderer {
     /**
      * Desired display radius:
      * - V OFF: true physical size, floored at VISUAL_SCALE_MIN_PX.
-     * - V ON: power-law of real radius (km) OR true screen size, whichever is
-     * larger.
+     * - V ON: log or power-law scale (per LOGARITHMIC_SCALE) OR true screen
+     * size, whichever is larger.
      * Overlap clamping in renderBodies may reduce this to trueScreenRadius.
      */
     private float desiredVisualRadius(SimObject obj) {
@@ -286,9 +438,13 @@ public class SimRenderer {
         if (!visualScaleMode) {
             return Math.max(VISUAL_SCALE_MIN_PX, trueRadius);
         }
-        // Power-law: VS_BASE * (radius_in_km ^ VS_EXP)
         double radiusKm = obj.radius / 1000.0;
-        float visualPx = (float) (VS_BASE * Math.pow(radiusKm, VS_EXP));
+        float visualPx;
+        if (LOGARITHMIC_SCALE) {
+            visualPx = (float) (VS_LOG_A * Math.log(radiusKm) + VS_LOG_B);
+        } else {
+            visualPx = (float) (VS_POW_BASE * Math.pow(radiusKm, VS_POW_EXP));
+        }
         return Math.max(Math.max(VISUAL_SCALE_MIN_PX, visualPx), trueRadius);
     }
 
@@ -315,7 +471,15 @@ public class SimRenderer {
         return CIRCLE_SEGMENTS;
     }
 
+    /** Returns the trail for the given object ID, or null. */
+    public OrbitTrail getTrail(String objectId) {
+        return trails.get(objectId);
+    }
+
     public void dispose() {
+        if (celestialBodyRenderer != null) {
+            celestialBodyRenderer.dispose();
+        }
         // ShapeRenderer is owned by GravitasGame and disposed there.
     }
 }

@@ -3,6 +3,7 @@ package com.gravitas.data;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
+import com.gravitas.entities.BeltData;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.physics.PhysicsEngine;
 
@@ -22,14 +23,22 @@ import java.util.Map;
  * 1. Solve Kepler's equation: M = E - e·sin(E) (Newton–Raphson)
  * 2. True anomaly: ν = 2·atan2(√(1+e)·sin(E/2), √(1-e)·cos(E/2))
  * 3. Radius: r = a·(1 - e·cos(E))
- * 4. Position in orbital plane: x' = r·cos(ν+ω), y' = r·sin(ν+ω)
- * 5. Add parent position (heliocentric cascade for moons).
- * 6. Orbital speed (vis-viva): v = √(G·M_parent·(2/r - 1/a))
- * 7. Velocity perpendicular to radius vector.
+ * 4. Longitude of periapsis in the reference plane: ϖ = Ω + ω.
+ * 5. Position in orbital plane: x' = r·cos(ν+ϖ), y' = r·sin(ν+ϖ)
+ * 6. Velocity in perifocal coordinates: v' = √(μ/p)·[-sinν, e+cosν]
+ * 7. Rotate by ϖ and add parent position/velocity.
  */
 public class SolarSystemLoader {
 
     private static final String TAG = "SolarSystemLoader";
+
+    /** Belt data collected during load (main asteroid belt, Kuiper belt, etc.). */
+    private final List<BeltData> belts = new ArrayList<>();
+
+    /** Returns belt data collected during the last {@link #load} call. */
+    public List<BeltData> getBelts() {
+        return belts;
+    }
 
     /**
      * Parses solar_system.json and adds all bodies to the physics engine.
@@ -38,7 +47,7 @@ public class SolarSystemLoader {
      * @return list of loaded CelestialBody instances in load order
      */
     public List<CelestialBody> load(PhysicsEngine engine) {
-        JsonValue root = new JsonReader().parse(Gdx.files.internal("data/solar_system.json"));
+        JsonValue root = new JsonReader().parse(Gdx.files.internal("data/solar_system/solar_system.json"));
         JsonValue bodiesArray = root.get("bodies");
 
         // First pass — create all bodies, build name→body map.
@@ -58,8 +67,18 @@ public class SolarSystemLoader {
             CelestialBody body = byName.get(name);
 
             boolean statistical = jb.getBoolean("statistical", false);
-            if (statistical)
+            if (statistical) {
+                // Collect belt rendering data.
+                String beltParent = jb.getString("parent", "Sun");
+                double beltInner = jb.getDouble("beltInnerRadius", 0);
+                double beltOuter = jb.getDouble("beltOuterRadius", 0);
+                int beltCount = jb.getInt("beltParticleCount", 400);
+                if (beltInner > 0 && beltOuter > beltInner) {
+                    belts.add(new BeltData(name, beltParent, beltInner, beltOuter, beltCount, body.displayColor));
+                    Gdx.app.log(TAG, "Loaded belt: " + name + " (" + beltCount + " particles)");
+                }
                 continue; // belt rendered separately, not physics-simulated
+            }
 
             String parentName = jb.getString("parent", null);
             if (parentName != null && !parentName.isEmpty()) {
@@ -97,12 +116,29 @@ public class SolarSystemLoader {
         body.semiMajorAxis = jb.getDouble("semiMajorAxis", 0);
         body.eccentricity = jb.getDouble("eccentricity", 0);
         body.inclination = jb.getDouble("inclination", 0);
+        body.longitudeOfAscendingNode = jb.getDouble("longitudeOfAscendingNode", 0);
         body.meanAnomalyAtEpoch = jb.getDouble("meanAnomalyAtEpoch", 0);
         body.argumentOfPeriapsis = jb.getDouble("argumentOfPeriapsis", 0);
         body.rotationPeriod = jb.getDouble("rotationPeriod", 0);
         body.atmosphereScaleHeight = jb.getDouble("atmosphereScaleHeight", 0);
         body.atmosphereDensitySeaLevel = jb.getDouble("atmosphereDensitySeaLevel", 0);
         body.displayColor = parseColor(jb.getString("color", "FFFFFF"));
+        body.textureFile = jb.getString("texture", null);
+        String glowStr = jb.getString("atmosphereGlowColor", null);
+        body.atmosphereGlowColor = glowStr != null ? parseColor(glowStr) : 0;
+
+        // Ring system
+        body.ringInnerRadius = jb.getDouble("ringInnerRadius", 0);
+        body.ringOuterRadius = jb.getDouble("ringOuterRadius", 0);
+        body.ringTexture = jb.getString("ringTexture", null);
+        String ringColorStr = jb.getString("ringColor", null);
+        body.ringColor = ringColorStr != null ? parseColor(ringColorStr) : 0;
+        body.ringOpacity = jb.getFloat("ringOpacity", 0);
+
+        // Cloud layer
+        body.cloudLayer = jb.getBoolean("cloudLayer", false);
+        String cloudColorStr = jb.getString("cloudColor", null);
+        body.cloudColor = cloudColorStr != null ? parseColor(cloudColorStr) : 0xFFFFFFFF;
 
         return body;
     }
@@ -115,7 +151,8 @@ public class SolarSystemLoader {
         double a = body.semiMajorAxis;
         double e = body.eccentricity;
         double M = body.meanAnomalyAtEpoch;
-        double omega = body.argumentOfPeriapsis; // argument of periapsis
+        double omega = body.argumentOfPeriapsis;
+        double longitudeOfPeriapsis = normalizeAngle(body.longitudeOfAscendingNode + omega);
 
         if (a <= 0)
             return; // body has no defined orbit (e.g. the star)
@@ -132,22 +169,34 @@ public class SolarSystemLoader {
         double r = a * (1.0 - e * Math.cos(E));
 
         // 4. Position in orbital plane (2D, inclination ignored).
-        double angle = nu + omega;
+        double angle = nu + longitudeOfPeriapsis;
         double px = r * Math.cos(angle);
         double py = r * Math.sin(angle);
 
-        // 5. Add parent position.
+        // 5. Position relative to parent.
         body.x = parent.x + px;
         body.y = parent.y + py;
 
-        // 6. Orbital speed from vis-viva: v = √(G·M_parent·(2/r - 1/a))
+        // 6. Velocity via perifocal coordinates.
+        // v = √(μ/p) · [-sinν, e+cosν] where p = a(1-e²) is the semi-latus rectum.
+        // This gives the exact velocity direction for any eccentricity, unlike
+        // vis-viva + perpendicular-to-radius which only holds for circular orbits
+        // (perpendicular ≠ velocity direction when e > 0).
         double GM = RK4IntegratorConstants.G * parent.mass;
-        double speed = Math.sqrt(GM * (2.0 / r - 1.0 / a));
+        double p = a * (1.0 - e * e);
+        double speedFactor = Math.sqrt(GM / p);
+        double vxPerifocal = -speedFactor * Math.sin(nu);
+        double vyPerifocal = speedFactor * (e + Math.cos(nu));
 
-        // 7. Velocity perpendicular to radius vector (prograde direction).
-        // Perpendicular to (cos α, sin α) is (-sin α, cos α).
-        body.vx = parent.vx - speed * Math.sin(angle);
-        body.vy = parent.vy + speed * Math.cos(angle);
+        // 7. Rotate perifocal velocity by ϖ into the 2D world plane, add parent
+        // velocity.
+        double cosVarpi = Math.cos(longitudeOfPeriapsis);
+        double sinVarpi = Math.sin(longitudeOfPeriapsis);
+        double vx = vxPerifocal * cosVarpi - vyPerifocal * sinVarpi;
+        double vy = vxPerifocal * sinVarpi + vyPerifocal * cosVarpi;
+
+        body.vx = parent.vx + vx;
+        body.vy = parent.vy + vy;
     }
 
     /**
@@ -163,6 +212,12 @@ public class SolarSystemLoader {
                 break;
         }
         return E;
+    }
+
+    private double normalizeAngle(double angle) {
+        double twoPi = 2.0 * Math.PI;
+        angle %= twoPi;
+        return angle < 0 ? angle + twoPi : angle;
     }
 
     // -------------------------------------------------------------------------
