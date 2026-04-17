@@ -10,6 +10,9 @@ uniform sampler2D u_texture;
 uniform float u_rotation;      // radians, current axial rotation
 uniform float u_isStar;        // 1.0 for stars (no limb darkening)
 uniform vec3  u_baseColor;     // fallback colour for near-black texture regions
+uniform vec3  u_worldToBodyRow0;
+uniform vec3  u_worldToBodyRow1;
+uniform vec3  u_worldToBodyRow2;
 
 const float PI = 3.14159265;
 
@@ -23,17 +26,22 @@ void main() {
 
     // Sphere normal at this fragment (unit sphere)
     float z = sqrt(1.0 - r2);
-    vec3 normal = vec3(uv.x, uv.y, z);
+    vec3 worldNormal = vec3(uv.x, -uv.y, z);
+    vec3 normal = normalize(vec3(
+        dot(u_worldToBodyRow0, worldNormal),
+        dot(u_worldToBodyRow1, worldNormal),
+        dot(u_worldToBodyRow2, worldNormal)
+    ));
 
     // Equirectangular projection: compute longitude and latitude from
     // the sphere normal, apply axial rotation offset
-    float lon = atan(normal.x, normal.z) - u_rotation;
+    float lon = atan(normal.z, normal.x);
     float lat = asin(clamp(normal.y, -1.0, 1.0));
 
     // Map to texture coordinates [0,1]
     vec2 texUV;
-    texUV.x = fract(lon / (2.0 * PI) + 0.5);
-    texUV.y = lat / PI + 0.5;
+    texUV.x = fract(0.75 - lon / (2.0 * PI) - u_rotation / (2.0 * PI));
+    texUV.y = 0.5 - lat / PI;
 
     // Fix the texture seam: at the longitude wrap-around point (atan
     // discontinuity), the screen-space derivative of texUV.x spikes from

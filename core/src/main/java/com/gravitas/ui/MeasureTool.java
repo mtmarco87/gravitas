@@ -2,14 +2,15 @@ package com.gravitas.ui;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Cursor.SystemCursor;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
-import com.gravitas.rendering.FontManager;
-import com.gravitas.rendering.WorldCamera;
+import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.util.FormatUtils;
 
 /**
  * On-screen distance measurement tool.
@@ -26,7 +27,6 @@ import com.gravitas.rendering.WorldCamera;
  */
 public class MeasureTool {
 
-    private static final double AU = 1.496e11;
     private static final Color LINE_COLOR = new Color(1f, 1f, 0.3f, 0.85f);
     private static final Color LABEL_COLOR = new Color(1f, 1f, 0.3f, 1f);
     private static final float DASH_PX = 8f;
@@ -47,8 +47,8 @@ public class MeasureTool {
     private boolean hasEnd = false;
 
     /** World-space start/end coordinates (SI meters). */
-    private double startWX, startWY;
-    private double endWX, endWY;
+    private double startWX, startWY, startWZ;
+    private double endWX, endWY, endWZ;
 
     public MeasureTool(WorldCamera camera, ShapeRenderer shapeRenderer, FontManager fontManager) {
         this.camera = camera;
@@ -67,22 +67,24 @@ public class MeasureTool {
     /** Toggle measure mode on/off. Clears any in-progress measurement. */
     public void toggle() {
         active = !active;
-        if (!active) {
-            clear();
-        } else {
-            clear();
-        }
+        clear();
+        updateCursor();
     }
 
     /** Exit measure mode and clear everything. */
     public void cancel() {
         active = false;
         clear();
+        updateCursor();
     }
 
     private void clear() {
         hasStart = false;
         hasEnd = false;
+    }
+
+    private void updateCursor() {
+        Gdx.graphics.setSystemCursor(active ? SystemCursor.Crosshair : SystemCursor.Arrow);
     }
 
     /**
@@ -97,12 +99,13 @@ public class MeasureTool {
             return false;
 
         float sy = Gdx.graphics.getHeight() - screenY; // bottom-left origin
-        double[] w = camera.screenToWorld(screenX, sy);
+        double[] w = pickWorldPoint(screenX, sy);
 
         if (!hasStart) {
             // Place start point.
             startWX = w[0];
             startWY = w[1];
+            startWZ = w[2];
             hasStart = true;
             hasEnd = false;
             return true;
@@ -111,6 +114,7 @@ public class MeasureTool {
             // Fix end point.
             endWX = w[0];
             endWY = w[1];
+            endWZ = w[2];
             hasEnd = true;
             return true;
         }
@@ -134,20 +138,22 @@ public class MeasureTool {
             return;
 
         // Determine end point: fixed or live mouse position.
-        double ewx, ewy;
+        double ewx, ewy, ewz;
         if (hasEnd) {
             ewx = endWX;
             ewy = endWY;
+            ewz = endWZ;
         } else {
             float sy = Gdx.graphics.getHeight() - Gdx.input.getY();
-            double[] w = camera.screenToWorld(Gdx.input.getX(), sy);
+            double[] w = pickWorldPoint(Gdx.input.getX(), sy);
             ewx = w[0];
             ewy = w[1];
+            ewz = w[2];
         }
 
         // Screen coords.
-        Vector2 s0 = camera.worldToScreen(startWX, startWY);
-        Vector2 s1 = camera.worldToScreen(ewx, ewy);
+        Vector2 s0 = camera.worldToScreen(startWX, startWY, startWZ);
+        Vector2 s1 = camera.worldToScreen(ewx, ewy, ewz);
 
         // Draw dashed line.
         Gdx.gl.glEnable(GL20.GL_BLEND);
@@ -167,9 +173,11 @@ public class MeasureTool {
         shape.end();
 
         // Distance label at midpoint.
-        double dist = Math.sqrt((ewx - startWX) * (ewx - startWX)
-                + (ewy - startWY) * (ewy - startWY));
-        String label = formatDistance(dist);
+        double dx = ewx - startWX;
+        double dy = ewy - startWY;
+        double dz = ewz - startWZ;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        String label = FormatUtils.formatDistance(dist);
 
         float mx = (s0.x + s1.x) * 0.5f;
         float my = (s0.y + s1.y) * 0.5f;
@@ -211,21 +219,17 @@ public class MeasureTool {
         shape.line(cx, cy - size, cx, cy + size);
     }
 
+    private double[] pickWorldPoint(float screenX, float screenY) {
+        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+            return camera.screenToWorldOnFocusPlane(screenX, screenY);
+        }
+
+        double[] world = camera.screenToWorld(screenX, screenY);
+        return new double[] { world[0], world[1], camera.getFocusZ() };
+    }
+
     // -------------------------------------------------------------------------
     // Formatting
     // -------------------------------------------------------------------------
 
-    private String formatDistance(double meters) {
-        if (meters >= AU * 0.01) {
-            return String.format("%.4f AU", meters / AU);
-        } else if (meters >= 1e9) {
-            return String.format("%.2f Gm", meters / 1e9);
-        } else if (meters >= 1e6) {
-            return String.format("%.2f Mm", meters / 1e6);
-        } else if (meters >= 1e3) {
-            return String.format("%.1f km", meters / 1e3);
-        } else {
-            return String.format("%.0f m", meters);
-        }
-    }
 }

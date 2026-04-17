@@ -6,14 +6,16 @@ import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.gravitas.data.SolarSystemLoader;
+import com.gravitas.data.UniverseLoader;
+import com.gravitas.entities.CelestialBody;
+import com.gravitas.entities.SimObject;
 import com.gravitas.physics.PhysicsEngine;
-import com.gravitas.rendering.FontManager;
-import com.gravitas.rendering.OrbitPredictor;
-import com.gravitas.rendering.SimRenderer;
-import com.gravitas.rendering.StarfieldBackground;
-import com.gravitas.rendering.WorldCamera;
+import com.gravitas.rendering.background.StarfieldRenderer;
+import com.gravitas.rendering.core.SimRenderer;
+import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.rendering.orbit.OrbitPredictor;
 import com.gravitas.ui.BodyTooltip;
+import com.gravitas.ui.FontManager;
 import com.gravitas.ui.GravitasInputProcessor;
 import com.gravitas.ui.HUD;
 import com.gravitas.ui.MeasureTool;
@@ -33,7 +35,7 @@ import com.gravitas.audio.MusicPlayer;
  * resize() — window resized
  * dispose() — cleanup
  */
-public class GravitasGame extends ApplicationAdapter {
+public class Gravitas extends ApplicationAdapter {
 
     private PhysicsEngine physics;
     private WorldCamera worldCamera;
@@ -48,7 +50,9 @@ public class GravitasGame extends ApplicationAdapter {
 
     private SpriteBatch spriteBatch;
     private ShapeRenderer shapeRenderer;
-    private StarfieldBackground starfield;
+    private StarfieldRenderer starfield;
+    private UniverseLoader universeLoader;
+    private boolean mode3D = true;
 
     // -------------------------------------------------------------------------
     // Lifecycle
@@ -68,35 +72,44 @@ public class GravitasGame extends ApplicationAdapter {
         physics = new PhysicsEngine();
         physics.setCollisionListener((a, b) -> Gdx.app.log("Collision", a.name + " <-> " + b.name));
 
-        // --- Load solar system ---
-        SolarSystemLoader loader = new SolarSystemLoader();
-        loader.load(physics);
+        // --- Load universe ---
+        universeLoader = new UniverseLoader();
+        universeLoader.load(physics, false);
 
-        // Start at 1 000 000x warp (preset 7).
-        physics.setTimeWarpFactor(1_000_000);
+        // Start at 500 000x warp (preset 6).
+        physics.setTimeWarpFactor(500_000);
 
         // --- Starfield background ---
-        starfield = new StarfieldBackground();
+        starfield = new StarfieldRenderer();
 
         // --- Renderer ---
         simRenderer = new SimRenderer(shapeRenderer, worldCamera);
-        simRenderer.initCelestialBodyRenderer("solar_system");
-        simRenderer.setBelts(loader.getBelts());
+        for (String folder : universeLoader.getTextureFolders()) {
+            simRenderer.initCelestialBodyRenderer(folder);
+        }
+        simRenderer.setBelts(universeLoader.getBelts());
         orbitPredictor = new OrbitPredictor(shapeRenderer, worldCamera);
 
         // --- Input ---
         inputProcessor = new GravitasInputProcessor(physics, worldCamera, orbitPredictor);
         inputProcessor.setSimRenderer(simRenderer);
+        inputProcessor.setDimensionToggle(this::toggleDimensionMode);
+        inputProcessor.setCameraReset(this::resetCameraToNearestSystemRoot);
         Gdx.input.setInputProcessor(inputProcessor);
 
         // --- HUD + Tooltip ---
         hud = new HUD(fontManager, physics, worldCamera, inputProcessor, shapeRenderer);
+        hud.setMode3DSupplier(this::isMode3D);
         bodyTooltip = new BodyTooltip(fontManager, worldCamera, physics, shapeRenderer);
-        bodyTooltip.setBelts(loader.getBelts());
+        bodyTooltip.setBelts(universeLoader.getBelts());
 
         // --- Measure tool ---
         measureTool = new MeasureTool(worldCamera, shapeRenderer, fontManager);
         inputProcessor.setMeasureTool(measureTool);
+
+        // Default to free camera now that the 3D path is the primary mode.
+        worldCamera.switchToFreeCam();
+        resetCameraToNearestSystemRoot();
 
         // --- Music ---
         musicPlayer = new MusicPlayer(
@@ -108,6 +121,108 @@ public class GravitasGame extends ApplicationAdapter {
         musicPlayer.play();
 
         Gdx.app.log("Gravitas", "Initialised. " + physics.getObjects().size() + " bodies loaded.");
+    }
+
+    // -------------------------------------------------------------------------
+    // 2D / 3D mode toggle
+    // -------------------------------------------------------------------------
+
+    public boolean isMode3D() {
+        return mode3D;
+    }
+
+    /**
+     * Toggles between 3D and legacy-2D mode. Reloads the solar system with
+     * flattened (inc=0) or full 3D orbits, resets trails, and forces TOP_VIEW
+     * when switching to 2D.
+     */
+    public void toggleDimensionMode() {
+        String followedObjectName = null;
+        SimObject followedObject = worldCamera.getFollowTarget();
+        if (followedObject != null) {
+            followedObjectName = followedObject.name;
+        }
+
+        mode3D = !mode3D;
+        physics.clearObjects();
+        simRenderer.clearTrails();
+        universeLoader = new UniverseLoader();
+        universeLoader.load(physics, !mode3D);
+        simRenderer.setBelts(universeLoader.getBelts());
+        bodyTooltip.setBelts(universeLoader.getBelts());
+
+        worldCamera.clearFollow();
+        SimObject reloadedFollowTarget = findObjectByName(followedObjectName);
+        if (reloadedFollowTarget != null) {
+            worldCamera.setFollowTarget(reloadedFollowTarget);
+        }
+
+        if (mode3D) {
+            worldCamera.switchToFreeCam();
+        } else {
+            worldCamera.switchToTopView();
+        }
+        Gdx.app.log("Gravitas", "Reloaded solar system in " + (mode3D ? "3D" : "2D") + " mode.");
+    }
+
+    private SimObject findObjectByName(String name) {
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+
+        for (SimObject object : physics.getObjects()) {
+            if (name.equals(object.name)) {
+                return object;
+            }
+        }
+        return null;
+    }
+
+    private void resetCameraToNearestSystemRoot() {
+        CelestialBody target = findNearestSystemRootStar(
+                worldCamera.getFocusX(),
+                worldCamera.getFocusY(),
+                worldCamera.getFocusZ());
+        if (target == null) {
+            return;
+        }
+
+        worldCamera.resetToTarget(target);
+        Gdx.app.log("Gravitas", "Camera reset to system root: " + target.name);
+    }
+
+    private CelestialBody findNearestSystemRootStar(double refX, double refY, double refZ) {
+        CelestialBody nearestRoot = null;
+        double bestDistSq = Double.POSITIVE_INFINITY;
+
+        for (SimObject object : physics.getObjects()) {
+            if (!(object instanceof CelestialBody body) || !body.active || body.parent != null) {
+                continue;
+            }
+            if (body.bodyType != CelestialBody.BodyType.STAR) {
+                continue;
+            }
+
+            double dx = body.x - refX;
+            double dy = body.y - refY;
+            double dz = body.z - refZ;
+            double distSq = dx * dx + dy * dy + dz * dz;
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                nearestRoot = body;
+            }
+        }
+
+        if (nearestRoot != null) {
+            return nearestRoot;
+        }
+
+        for (SimObject object : physics.getObjects()) {
+            if (object instanceof CelestialBody body && body.active && body.parent == null) {
+                return body;
+            }
+        }
+        return null;
     }
 
     // -------------------------------------------------------------------------
@@ -127,17 +242,23 @@ public class GravitasGame extends ApplicationAdapter {
         // 2. Record trail positions after integration.
         simRenderer.recordTrailPositions(physics.getObjects());
 
-        // 3. Update camera (follow target, zoom smoothing).
-        worldCamera.update(dt);
+        // 3. Apply continuous input and deferred tap actions.
+        inputProcessor.update(dt);
 
-        // 3b. Fire any deferred tap actions (single-tap 300ms window).
-        inputProcessor.update();
+        // 3b. Update camera (follow target, zoom smoothing).
+        worldCamera.update(dt);
 
         // Sync visual-scale mode from input state.
         simRenderer.setVisualScaleMode(inputProcessor.isVisualScaleMode());
 
         // Sync celestial FX toggle.
         simRenderer.setCelestialFx(inputProcessor.isCelestialFx());
+
+        // Sync trail visibility toggle.
+        simRenderer.setTrailsEnabled(inputProcessor.isShowTrails());
+
+        // Sync spin-axis overlay toggle.
+        simRenderer.setSpinAxisOverlayEnabled(inputProcessor.isShowSpinAxisOverlay());
 
         // Sync orbit predictor toggle.
         orbitPredictor.setEnabled(inputProcessor.isShowOrbitPredictors());
@@ -159,15 +280,11 @@ public class GravitasGame extends ApplicationAdapter {
         // ShapeRenderer uses screen coords from the camera.
         shapeRenderer.setProjectionMatrix(worldCamera.getCamera().combined);
 
-        // 6. Orbit predictors (below trails + bodies).
-        shapeRenderer.setProjectionMatrix(worldCamera.getCamera().combined);
-        orbitPredictor.render(physics.getObjects(), physics.getTimeWarpFactor());
-
-        // 6b. Render simulation (trails + bodies, on top of predictors).
+        // 6. Render simulation and orbit overlays.
         double simDt = dt * physics.getTimeWarpFactor();
-        simRenderer.render(physics.getObjects(), simDt);
+        simRenderer.render(physics.getObjects(), simDt, orbitPredictor, physics.getTimeWarpFactor());
 
-        // 6c. Measure tool (dashed line + label).
+        // 6b. Measure tool (dashed line + label).
         spriteBatch.getProjectionMatrix().setToOrtho2D(0, 0,
                 Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         measureTool.render(spriteBatch, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -197,6 +314,7 @@ public class GravitasGame extends ApplicationAdapter {
     public void dispose() {
         musicPlayer.dispose();
         simRenderer.dispose();
+        orbitPredictor.dispose();
         starfield.dispose();
         spriteBatch.dispose();
         shapeRenderer.dispose();

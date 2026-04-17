@@ -11,8 +11,10 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 import com.gravitas.physics.PhysicsEngine;
-import com.gravitas.rendering.FontManager;
-import com.gravitas.rendering.WorldCamera;
+import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.util.FormatUtils;
+
+import java.util.function.BooleanSupplier;
 
 /**
  * Heads-up display rendered in screen space over the simulation.
@@ -20,7 +22,7 @@ import com.gravitas.rendering.WorldCamera;
  * Top-left : simulation time, time warp, pause indicator
  * Bottom-left: selected object details + scale bar
  * Top-right : controls legend (toggleable with H)
- * Bottom-right: mode indicators (V = visual scale, T = orbit predictors)
+ * Bottom-right: mode indicators (V = visual scale, T = overlays)
  */
 public class HUD {
 
@@ -32,7 +34,6 @@ public class HUD {
     private static final Color INFO_COLOR = new Color(0.7f, 0.9f, 0.7f, 1f);
     private static final Color DIM_COLOR = new Color(0.6f, 0.6f, 0.6f, 0.8f);
 
-    private static final double AU = 1.496e11; // m per AU
     private static final float LEGEND_PAD = 10f;
     private static final Color PANEL_COLOR = new Color(0.04f, 0.04f, 0.08f, 0.50f);
 
@@ -43,9 +44,10 @@ public class HUD {
     private final ShapeRenderer shapeRenderer;
     private final OrthographicCamera screenCam = new OrthographicCamera();
     private final GlyphLayout layout = new GlyphLayout();
+    private BooleanSupplier mode3DSupplier = () -> true;
 
     private SimObject selectedObject;
-    private boolean showLegend = true;
+    private boolean showLegend = false;
 
     public HUD(FontManager fontManager, PhysicsEngine physics, WorldCamera camera,
             GravitasInputProcessor input, ShapeRenderer shapeRenderer) {
@@ -54,6 +56,10 @@ public class HUD {
         this.camera = camera;
         this.input = input;
         this.shapeRenderer = shapeRenderer;
+    }
+
+    public void setMode3DSupplier(BooleanSupplier supplier) {
+        this.mode3DSupplier = supplier;
     }
 
     // -------------------------------------------------------------------------
@@ -89,10 +95,14 @@ public class HUD {
             font.draw(batch, "Speed  " + String.format("%.3f km/s", selectedObject.speed() / 1000.0), MARGIN, y);
             y -= LINE_HEIGHT;
 
-            font.draw(batch, "Pos    " + formatPosition(selectedObject.x, selectedObject.y), MARGIN, y);
+            boolean showZ = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+            font.draw(batch,
+                    "Pos    "
+                            + formatPosition(selectedObject.x, selectedObject.y, showZ ? selectedObject.z : Double.NaN),
+                    MARGIN, y);
             y -= LINE_HEIGHT;
 
-            CelestialBody nearest = physics.nearestBodyTo(selectedObject.x, selectedObject.y);
+            CelestialBody nearest = physics.nearestBodyTo(selectedObject.x, selectedObject.y, selectedObject.z);
             if (nearest != null && nearest != selectedObject) {
                 double alt = selectedObject.distanceTo(nearest) - nearest.radius;
                 font.draw(batch, "Alt/" + nearest.name + "  " + formatAltitude(alt), MARGIN, y);
@@ -101,7 +111,7 @@ public class HUD {
         }
 
         // ---- Scale bar (bottom-left) ----
-        renderScaleBar(batch, screenHeight);
+        renderScaleBar(batch, screenWidth, screenHeight);
 
         // ---- Mode indicators (bottom-right) ----
         renderModeIndicators(batch, screenWidth);
@@ -116,23 +126,74 @@ public class HUD {
     // Scale bar
     // -------------------------------------------------------------------------
 
-    private void renderScaleBar(SpriteBatch batch, int screenHeight) {
-        float barWidthPx = 120f;
-        double worldMeters = barWidthPx * camera.getMetersPerPixel();
+    private static final float SCALE_BAR_PX = 120f;
+    private static final float TICK_HEIGHT = 5f;
+    private static final float LABEL_GAP = 4f;
+    private static final float DASH_LEN = 5f;
+    private static final float DASH_GAP = 3f;
+    private static final Color SCALE_COLOR = new Color(0.85f, 0.85f, 0.85f, 0.9f);
 
-        String label;
-        if (worldMeters >= AU * 0.1) {
-            label = String.format("%.2f AU", worldMeters / AU);
-        } else if (worldMeters >= 1e9) {
-            label = String.format("%.0f Gm", worldMeters / 1e9);
-        } else if (worldMeters >= 1e6) {
-            label = String.format("%.0f Mm", worldMeters / 1e6);
-        } else {
-            label = String.format("%.0f km", worldMeters / 1e3);
-        }
+    private void renderScaleBar(SpriteBatch batch, int screenWidth, int screenHeight) {
+        double worldMeters = camera.hudScaleBarWorldLength(SCALE_BAR_PX);
+        String label = FormatUtils.formatDistance(worldMeters);
 
+        // Measure label so we can centre it and split the bar around it.
+        layout.setText(font, label);
+        float labelW = layout.width;
+        float labelH = layout.height;
+
+        float barY = MARGIN + LINE_HEIGHT;
+        float x0 = MARGIN;
+        float x1 = MARGIN + SCALE_BAR_PX;
+        float mid = (x0 + x1) / 2f;
+        float gapLeft = mid - labelW / 2f - LABEL_GAP;
+        float gapRight = mid + labelW / 2f + LABEL_GAP;
+
+        // Draw dashed lines + ticks via ShapeRenderer.
+        batch.end();
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        screenCam.setToOrtho(false, screenWidth, screenHeight);
+        screenCam.update();
+        shapeRenderer.setProjectionMatrix(screenCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        Gdx.gl.glLineWidth(1.5f);
+        shapeRenderer.setColor(SCALE_COLOR);
+        // Dashed left segment (from tick inward toward label)
+        drawDashedLineInward(x0, gapLeft, barY);
+        // Dashed right segment (from tick inward toward label)
+        drawDashedLineInward(x1, gapRight, barY);
+        // Vertical end caps (solid)
+        shapeRenderer.line(x0, barY - TICK_HEIGHT, x0, barY + TICK_HEIGHT);
+        shapeRenderer.line(x1, barY - TICK_HEIGHT, x1, barY + TICK_HEIGHT);
+        shapeRenderer.end();
+        Gdx.gl.glLineWidth(1f);
+        batch.begin();
+
+        // Label centred on the bar line in the gap.
+        float labelX = mid - labelW / 2f;
+        float labelY = barY + labelH / 2f;
         font.setColor(TEXT_COLOR);
-        font.draw(batch, "|--" + label + "--|", MARGIN, MARGIN + LINE_HEIGHT * 2);
+        font.draw(batch, label, labelX, labelY);
+    }
+
+    /**
+     * Draws a horizontal dashed line starting from {@code anchor} toward
+     * {@code limit}. The first dash is always full-length at the anchor end;
+     * any partial dash is clipped at the limit (near the label gap).
+     */
+    private void drawDashedLineInward(float anchor, float limit, float y) {
+        float step = DASH_LEN + DASH_GAP;
+        float dir = (limit > anchor) ? 1f : -1f;
+        float span = Math.abs(limit - anchor);
+        float x = 0f;
+        while (x < span) {
+            float dashEnd = Math.min(x + DASH_LEN, span);
+            float px0 = anchor + dir * x;
+            float px1 = anchor + dir * dashEnd;
+            shapeRenderer.line(px0, y, px1, y);
+            x += step;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -140,20 +201,34 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private void renderModeIndicators(SpriteBatch batch, int screenWidth) {
+        String dimText = "L: Orbits [" + (mode3DSupplier.getAsBoolean() ? "3D" : "2D") + "]";
+        String camText = "C: Camera [" + (camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? "3D" : "2D") + "]";
+        String fovText = camera.isAdaptiveFreeCamFovEnabled()
+                ? "Z: FOV [AUTO " + Math.round(camera.getFreeCamFov()) + "°]"
+                : "Z: FOV [FIX " + Math.round(camera.getSelectedFixedFreeCamFovPreset()) + "°]";
+        String ffText = "P: Follow [" + camera.getFollowFrameMode().hudLabel() + "]";
         String vsText = "V: Visual Scale [" + (input.isVisualScaleMode() ? "ON" : "OFF") + "]";
-        String opText = "T: Orbit Predict [" + (input.isShowOrbitPredictors() ? "ON" : "OFF") + "]";
+        String opText = "T: Overlays [" + input.getOverlayArtifactsMode().hudLabel() + "]";
         String lgText = "H: Help [" + (showLegend ? "ON" : "OFF") + "]";
         MeasureTool mt = input.getMeasureTool();
         String mtText = "M: Measure [" + (mt != null && mt.isActive() ? "ON" : "OFF") + "]";
         font.setColor(DIM_COLOR);
+        layout.setText(font, dimText);
+        font.draw(batch, dimText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 10);
+        layout.setText(font, camText);
+        font.draw(batch, camText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 9);
+        layout.setText(font, fovText);
+        font.draw(batch, fovText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 8);
+        layout.setText(font, ffText);
+        font.draw(batch, ffText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 7);
         layout.setText(font, vsText);
-        font.draw(batch, vsText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 5);
+        font.draw(batch, vsText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 6);
         layout.setText(font, opText);
-        font.draw(batch, opText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 4);
+        font.draw(batch, opText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 5);
         layout.setText(font, mtText);
-        font.draw(batch, mtText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 3);
+        font.draw(batch, mtText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 4);
         layout.setText(font, lgText);
-        font.draw(batch, lgText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 2);
+        font.draw(batch, lgText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 3);
     }
 
     // -------------------------------------------------------------------------
@@ -161,20 +236,26 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private void renderLegend(SpriteBatch batch, int screenWidth, int screenHeight) {
+        String dragArrowsAction = camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? "orbit" : "pan";
         String[] lines = {
-                "SPACE       pause/resume",
-                "1-0         time warp presets",
-                ",  .        prev/next preset",
-                "Scroll      zoom toward cursor",
-                "Drag/Arrows pan camera",
-                "2x-click    follow body",
-                "F           clear follow",
-                "V           toggle visual scale",
-                "T           toggle orbit predict",
-                "M           measure distance",
-                "X           toggle celestial FX",
-                "H           hide/show Help",
-                "Q           quit",
+                "SPACE        pause/resume",
+                "1-0  , .     time warp",
+                "Scroll       zoom",
+                "Drag/Arrows  " + dragArrowsAction,
+                "Dbl-click    follow body",
+                "F            clear follow",
+                "P            cycle follow frame",
+                "L            orbits 2D/3D",
+                "C            camera 2D/3D",
+                "Z            camera FOV 5/60/auto",
+                "R            reset camera",
+                "V            visual scale",
+                "T            overlays",
+                "Y            orbit style",
+                "M            measure",
+                "X            celestial FX",
+                "H            help",
+                "Q            quit",
         };
 
         // Measure the widest line.
@@ -218,31 +299,20 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private String formatWarp(double warp) {
-        if (warp >= 1e9)
-            return "1000000000x [0]";
-        if (warp >= 1e8)
-            return "100000000x [9]";
-        if (warp >= 1e7)
-            return "10000000x [8]";
-        if (warp >= 1e6)
-            return "1000000x [7]";
-        if (warp >= 1e5)
-            return "100000x [6]";
-        if (warp >= 1e4)
-            return "10000x [5]";
-        if (warp >= 1e3)
-            return "1000x [4]";
-        if (warp >= 100)
-            return "100x [3]";
-        if (warp >= 10)
-            return "10x [2]";
-        return "1x [1]";
+        return GravitasInputProcessor.formatWarpPreset(warp);
     }
 
-    private String formatPosition(double wx, double wy) {
-        double r = Math.sqrt(wx * wx + wy * wy);
-        if (r >= AU * 0.01) {
-            return String.format("(%.3f, %.3f) AU", wx / AU, wy / AU);
+    private String formatPosition(double wx, double wy, double wz) {
+        double r = Math.sqrt(wx * wx + wy * wy + wz * wz);
+        if (r >= FormatUtils.AU * 0.01) {
+            if (!Double.isNaN(wz)) {
+                return String.format("(%.3f, %.3f, %.3f) AU", wx / FormatUtils.AU, wy / FormatUtils.AU,
+                        wz / FormatUtils.AU);
+            }
+            return String.format("(%.3f, %.3f) AU", wx / FormatUtils.AU, wy / FormatUtils.AU);
+        }
+        if (!Double.isNaN(wz)) {
+            return String.format("(%.0f, %.0f, %.0f) km", wx / 1000.0, wy / 1000.0, wz / 1000.0);
         }
         return String.format("(%.0f, %.0f) km", wx / 1000.0, wy / 1000.0);
     }

@@ -1,5 +1,5 @@
 {
-  "_comment": "Gravitas solar system data. Source: NASA JPL Horizons / planetary fact sheets.",
+  "_comment": "Gravitas solar system data. Orbital elements from NASA JPL Horizons. Spin-axis data from NAIF pck00011.tpc evaluated at J2000 where available; Eris uses the published Dysnomia orbit-pole proxy, while Makemake currently uses an explicit zero-tilt orbital-relative fallback because no unique absolute pole solution is published.",
   "_units": {
     "mass": "kg",
     "radius": "m",
@@ -10,10 +10,14 @@
     "meanAnomalyAtEpoch": "radians",
     "argumentOfPeriapsis": "radians (argument of periapsis: omega)",
     "inclination": "radians",
-    "longitudeOfAscendingNode": "radians"
+    "longitudeOfAscendingNode": "radians",
+    "spinAxis.rightAscension": "radians (north-pole RA in ICRF/J2000)",
+    "spinAxis.declination": "radians (north-pole Dec in ICRF/J2000)",
+    "spinAxis.tilt": "radians (tilt from orbital normal)",
+    "spinAxis.azimuth": "radians (in orbital plane, measured from projected world +X axis)"
   },
   "_conventions": {
-    "periapsisAngle": "The JSON stores argumentOfPeriapsis = omega. The 2D in-plane longitude of periapsis is derived as longitudeOfAscendingNode + argumentOfPeriapsis."
+    "periapsisAngle": "The JSON stores argumentOfPeriapsis = omega. The longitude of periapsis is derived as longitudeOfAscendingNode + argumentOfPeriapsis (varpi = Omega + omega)."
   },
   "_epoch": "J2000.0 (2000-Jan-1 12:00 TDB)",
   "bodies": [
@@ -23,9 +27,18 @@
       "parent": null,
       "mass": 1.989e30,
       "radius": 695700000.0,
-      "color": "FFFF00",
+      "color": {
+        "base": "FFFF00",
+        "core": "FFF7D9",
+        "edge": "FFA633"
+      },
       "texture": "sun.jpg",
       "rotationPeriod": 2192832,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.99391059,
+        "declination": 1.11474179
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 0,
@@ -41,9 +54,16 @@
       "parent": "Sun",
       "mass": 3.301e23,
       "radius": 2439700.0,
-      "color": "B5B5B5",
+      "color": {
+        "base": "B5B5B5"
+      },
       "texture": "mercury.jpg",
       "rotationPeriod": 5067360,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.90455497,
+        "declination": 1.07190269
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 57910000000.0,
@@ -59,10 +79,17 @@
       "parent": "Sun",
       "mass": 4.867e24,
       "radius": 6051800.0,
-      "color": "E8C56B",
+      "color": {
+        "base": "E8C56B",
+        "glow": "E8D080"
+      },
       "texture": "venus.jpg",
-      "atmosphereGlowColor": "E8D080",
       "rotationPeriod": -20996798,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.76056007,
+        "declination": 1.17216313
+      },
       "atmosphereScaleHeight": 15900,
       "atmosphereDensitySeaLevel": 65.0,
       "semiMajorAxis": 108210000000.0,
@@ -78,10 +105,17 @@
       "parent": "Sun",
       "mass": 5.972e24,
       "radius": 6371000.0,
-      "color": "2E86AB",
+      "color": {
+        "base": "2E86AB",
+        "glow": "6CB4EE"
+      },
       "texture": "earth.jpg",
-      "atmosphereGlowColor": "6CB4EE",
       "rotationPeriod": 86164,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.0,
+        "declination": 1.57079633
+      },
       "atmosphereScaleHeight": 8500,
       "atmosphereDensitySeaLevel": 1.225,
       "semiMajorAxis": 149600000000.0,
@@ -90,8 +124,10 @@
       "longitudeOfAscendingNode": 0.0,
       "meanAnomalyAtEpoch": 6.24002,
       "argumentOfPeriapsis": 1.79659,
-      "cloudLayer": true,
-      "cloudColor": "FFFFFF"
+      "clouds": {
+        "enabled": true,
+        "color": "FFFFFF"
+      }
     },
     {
       "name": "Moon",
@@ -99,9 +135,16 @@
       "parent": "Earth",
       "mass": 7.342e22,
       "radius": 1737400.0,
-      "color": "C0C0C0",
+      "color": {
+        "base": "C0C0C0"
+      },
       "texture": "earth-moon.jpg",
       "rotationPeriod": 2360592,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.65754608,
+        "declination": 1.14565337
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 384400000.0,
@@ -117,10 +160,17 @@
       "parent": "Sun",
       "mass": 6.417e23,
       "radius": 3389500.0,
-      "color": "C1440E",
+      "color": {
+        "base": "C1440E",
+        "glow": "D4886B"
+      },
       "texture": "mars.jpg",
-      "atmosphereGlowColor": "D4886B",
       "rotationPeriod": 88642,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.53739219,
+        "declination": 0.95002662
+      },
       "atmosphereScaleHeight": 11100,
       "atmosphereDensitySeaLevel": 0.02,
       "semiMajorAxis": 227900000000.0,
@@ -136,9 +186,16 @@
       "parent": "Mars",
       "mass": 1.08e16,
       "radius": 11100.0,
-      "color": "A08060",
+      "color": {
+        "base": "A08060"
+      },
       "texture": "mars-phobos.jpg",
       "rotationPeriod": 27553,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.54439995,
+        "declination": 0.92303959
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 9376000.0,
@@ -154,9 +211,16 @@
       "parent": "Mars",
       "mass": 1.4762e15,
       "radius": 6200.0,
-      "color": "A08060",
+      "color": {
+        "base": "A08060"
+      },
       "texture": "mars-deimos.jpg",
       "rotationPeriod": 109044,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.52670826,
+        "declination": 0.93392429
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 23458000.0,
@@ -172,10 +236,17 @@
       "parent": "Sun",
       "mass": 1.898e27,
       "radius": 71492000.0,
-      "color": "C88B3A",
+      "color": {
+        "base": "C88B3A",
+        "glow": "D4A055"
+      },
       "texture": "jupiter.jpg",
-      "atmosphereGlowColor": "D4A055",
       "rotationPeriod": 35730,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.67848079,
+        "declination": 1.12566424
+      },
       "atmosphereScaleHeight": 27000,
       "atmosphereDensitySeaLevel": 0.16,
       "semiMajorAxis": 778500000000.0,
@@ -184,10 +255,12 @@
       "longitudeOfAscendingNode": 1.7539,
       "meanAnomalyAtEpoch": 0.32839,
       "argumentOfPeriapsis": 4.80087,
-      "ringInnerRadius": 122000000.0,
-      "ringOuterRadius": 129000000.0,
-      "ringColor": "C8A060",
-      "ringOpacity": 0.12
+      "ring": {
+        "innerRadius": 122000000.0,
+        "outerRadius": 129000000.0,
+        "color": "C8A060",
+        "opacity": 0.12
+      }
     },
     {
       "name": "Io",
@@ -195,9 +268,16 @@
       "parent": "Jupiter",
       "mass": 8.9319e22,
       "radius": 1821600.0,
-      "color": "E8D44D",
+      "color": {
+        "base": "E8D44D"
+      },
       "texture": "jupiter-io-a.jpg",
       "rotationPeriod": 152853,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.67835506,
+        "declination": 1.12573737
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 421800000.0,
@@ -213,9 +293,16 @@
       "parent": "Jupiter",
       "mass": 4.7998e22,
       "radius": 1560800.0,
-      "color": "C4A882",
+      "color": {
+        "base": "C4A882"
+      },
       "texture": "jupiter-europa.jpg",
       "rotationPeriod": 306822,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.67887866,
+        "declination": 1.1259119
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 671100000.0,
@@ -231,9 +318,16 @@
       "parent": "Jupiter",
       "mass": 1.4819e23,
       "radius": 2634100.0,
-      "color": "9E8F7D",
+      "color": {
+        "base": "9E8F7D"
+      },
       "texture": "jupiter-ganymede.jpg",
       "rotationPeriod": 618153,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.68731511,
+        "declination": 1.1261633
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 1070400000.0,
@@ -249,9 +343,16 @@
       "parent": "Jupiter",
       "mass": 1.0759e23,
       "radius": 2410300.0,
-      "color": "7A6E64",
+      "color": {
+        "base": "7A6E64"
+      },
       "texture": "jupiter-callisto.jpg",
       "rotationPeriod": 1441931,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.69004877,
+        "declination": 1.13149695
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 1882700000.0,
@@ -267,10 +368,17 @@
       "parent": "Sun",
       "mass": 5.683e26,
       "radius": 60268000.0,
-      "color": "EAD5A0",
+      "color": {
+        "base": "EAD5A0",
+        "glow": "E8D5A0"
+      },
       "texture": "saturn.jpg",
-      "atmosphereGlowColor": "E8D5A0",
       "rotationPeriod": 38362,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.70841169,
+        "declination": 1.4579957
+      },
       "atmosphereScaleHeight": 59500,
       "atmosphereDensitySeaLevel": 0.19,
       "semiMajorAxis": 1432000000000.0,
@@ -279,10 +387,12 @@
       "longitudeOfAscendingNode": 1.98443,
       "meanAnomalyAtEpoch": 5.54104,
       "argumentOfPeriapsis": 5.9155,
-      "ringInnerRadius": 74700000.0,
-      "ringOuterRadius": 136800000.0,
-      "ringTexture": "saturn_rings.png",
-      "ringOpacity": 0.9
+      "ring": {
+        "innerRadius": 74700000.0,
+        "outerRadius": 136800000.0,
+        "texture": "saturn_rings.png",
+        "opacity": 0.9
+      }
     },
     {
       "name": "Titan",
@@ -290,10 +400,17 @@
       "parent": "Saturn",
       "mass": 1.3452e23,
       "radius": 2575500.0,
-      "color": "E8A020",
+      "color": {
+        "base": "E8A020",
+        "glow": "E8B040"
+      },
       "texture": "saturn-titan.jpg",
-      "atmosphereGlowColor": "E8B040",
       "rotationPeriod": 1377648,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.68910311,
+        "declination": 1.45609154
+      },
       "atmosphereScaleHeight": 21000,
       "atmosphereDensitySeaLevel": 5.3,
       "semiMajorAxis": 1221870000.0,
@@ -309,9 +426,16 @@
       "parent": "Saturn",
       "mass": 1.08022e20,
       "radius": 252000.0,
-      "color": "F0F0F0",
+      "color": {
+        "base": "F0F0F0"
+      },
       "texture": "saturn-enceladus.jpg",
       "rotationPeriod": 118386,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.70965087,
+        "declination": 1.45769899
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 238037000.0,
@@ -327,10 +451,17 @@
       "parent": "Sun",
       "mass": 8.681e25,
       "radius": 25559000.0,
-      "color": "7DE8E8",
+      "color": {
+        "base": "7DE8E8",
+        "glow": "7DE8E8"
+      },
       "texture": "uranus.jpg",
-      "atmosphereGlowColor": "7DE8E8",
       "rotationPeriod": -62064,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 4.49092415,
+        "declination": -0.26485371
+      },
       "atmosphereScaleHeight": 27700,
       "atmosphereDensitySeaLevel": 0.42,
       "semiMajorAxis": 2867000000000.0,
@@ -339,10 +470,12 @@
       "longitudeOfAscendingNode": 1.29163,
       "meanAnomalyAtEpoch": 2.49389,
       "argumentOfPeriapsis": 1.68579,
-      "ringInnerRadius": 41800000.0,
-      "ringOuterRadius": 51100000.0,
-      "ringColor": "607888",
-      "ringOpacity": 0.15
+      "ring": {
+        "innerRadius": 41800000.0,
+        "outerRadius": 51100000.0,
+        "color": "607888",
+        "opacity": 0.15
+      }
     },
     {
       "name": "Neptune",
@@ -350,10 +483,17 @@
       "parent": "Sun",
       "mass": 1.024e26,
       "radius": 24764000.0,
-      "color": "3F54BA",
+      "color": {
+        "base": "5B7BE0",
+        "glow": "5070D0"
+      },
       "texture": "neptune.jpg",
-      "atmosphereGlowColor": "5070D0",
       "rotationPeriod": 57996,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.22481765,
+        "declination": 0.75852009
+      },
       "atmosphereScaleHeight": 19700,
       "atmosphereDensitySeaLevel": 0.45,
       "semiMajorAxis": 4515000000000.0,
@@ -362,10 +502,12 @@
       "longitudeOfAscendingNode": 2.30006,
       "meanAnomalyAtEpoch": 4.5271,
       "argumentOfPeriapsis": 4.76791,
-      "ringInnerRadius": 41900000.0,
-      "ringOuterRadius": 62900000.0,
-      "ringColor": "5060A0",
-      "ringOpacity": 0.1
+      "ring": {
+        "innerRadius": 41900000.0,
+        "outerRadius": 62900000.0,
+        "color": "5060A0",
+        "opacity": 0.1
+      }
     },
     {
       "name": "Triton",
@@ -373,9 +515,16 @@
       "parent": "Neptune",
       "mass": 2.139e22,
       "radius": 1353400.0,
-      "color": "D4C8B0",
+      "color": {
+        "base": "D4C8B0"
+      },
       "texture": "neptune-triton.jpg",
       "rotationPeriod": -507773,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.20895231,
+        "declination": 0.35434305
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 354759000.0,
@@ -391,10 +540,17 @@
       "parent": "Sun",
       "mass": 1.303e22,
       "radius": 1188300.0,
-      "color": "C2A882",
+      "color": {
+        "base": "C2A882",
+        "glow": "C0B090"
+      },
       "texture": "pluto.jpg",
-      "atmosphereGlowColor": "C0B090",
       "rotationPeriod": -551856,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 2.32116573,
+        "declination": -0.10756464
+      },
       "atmosphereScaleHeight": 60000,
       "atmosphereDensitySeaLevel": 1.5e-5,
       "semiMajorAxis": 5906400000000.0,
@@ -410,9 +566,16 @@
       "parent": "Pluto",
       "mass": 1.586e21,
       "radius": 603500.0,
-      "color": "A0A0A0",
+      "color": {
+        "base": "A0A0A0"
+      },
       "texture": "pluto-charon.jpg",
       "rotationPeriod": 551856,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 2.32116573,
+        "declination": -0.10756464
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 19591000.0,
@@ -428,9 +591,16 @@
       "parent": "Sun",
       "mass": 9.3835e20,
       "radius": 469700.0,
-      "color": "909090",
+      "color": {
+        "base": "909090"
+      },
       "texture": "ceres.jpg",
       "rotationPeriod": 32668,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 5.0862036,
+        "declination": 1.16525162
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 414000000000.0,
@@ -441,13 +611,67 @@
       "argumentOfPeriapsis": 1.28285
     },
     {
+      "_comment": "Makemake: orbital elements from JPL Horizons (osculating, J2000.0). Physical data from Ortiz et al. 2012 (radius), Parker et al. 2016 (mass est.), JPL SBDB (rotation). A unique pole RA/Dec is not currently published by NAIF/JPL/IAU, so the data uses an explicit orbital-relative zero-tilt fallback instead of a fabricated absolute pole.",
+      "name": "Makemake",
+      "type": "DWARF_PLANET",
+      "parent": "Sun",
+      "mass": 3.1e21,
+      "radius": 715000.0,
+      "color": {
+        "base": "D4906A"
+      },
+      "texture": "makemake.jpg",
+      "rotationPeriod": 82176,
+      "spinAxis": {
+        "type": "orbital-relative",
+        "tilt": 0.0,
+        "azimuth": 0.0
+      },
+      "atmosphereScaleHeight": 0,
+      "atmosphereDensitySeaLevel": 0,
+      "semiMajorAxis": 6787600000000.0,
+      "eccentricity": 0.16452,
+      "inclination": 0.50615,
+      "longitudeOfAscendingNode": 1.38361,
+      "meanAnomalyAtEpoch": 2.43858,
+      "argumentOfPeriapsis": 5.17107
+    },
+    {
+      "_comment": "Eris: orbital elements from JPL Horizons (osculating, J2000.0). Physical data from Sicardy et al. 2011 (radius), Holler et al. 2021 (mass), JPL SBDB (rotation). The spin-axis proxy below uses the published Dysnomia orbit pole from Holler et al. 2021 because NAIF/JPL do not publish an Eris pole kernel.",
+      "name": "Eris",
+      "type": "DWARF_PLANET",
+      "parent": "Sun",
+      "mass": 1.6466e22,
+      "radius": 1163000.0,
+      "color": {
+        "base": "D0D0D0"
+      },
+      "texture": "eris.jpg",
+      "rotationPeriod": 93240,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.63128559,
+        "declination": 0.77684605
+      },
+      "atmosphereScaleHeight": 0,
+      "atmosphereDensitySeaLevel": 0,
+      "semiMajorAxis": 10193600000000.0,
+      "eccentricity": 0.4325,
+      "inclination": 0.76342,
+      "longitudeOfAscendingNode": 0.63056,
+      "meanAnomalyAtEpoch": 3.391,
+      "argumentOfPeriapsis": 2.63274
+    },
+    {
       "_comment": "Asteroid belt: statistical belt rendered procedurally, not simulated individually.",
       "name": "AsteroidBelt",
       "type": "ASTEROID",
       "parent": "Sun",
       "mass": 3e21,
       "radius": 100000.0,
-      "color": "787878",
+      "color": {
+        "base": "787878"
+      },
       "rotationPeriod": 0,
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -469,7 +693,9 @@
       "parent": "Sun",
       "mass": 3e22,
       "radius": 100000.0,
-      "color": "505868",
+      "color": {
+        "base": "505868"
+      },
       "rotationPeriod": 0,
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,

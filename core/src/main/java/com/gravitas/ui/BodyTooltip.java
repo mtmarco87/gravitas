@@ -6,12 +6,12 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.gravitas.entities.BeltData;
+import com.gravitas.entities.Belt;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 import com.gravitas.physics.PhysicsEngine;
-import com.gravitas.rendering.FontManager;
-import com.gravitas.rendering.WorldCamera;
+import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.util.FormatUtils;
 
 import java.util.List;
 
@@ -40,14 +40,12 @@ public class BodyTooltip {
     private static final Color TEXT_COLOR = new Color(0.95f, 0.95f, 0.95f, 1f);
     private static final Color TITLE_COLOR = new Color(0.5f, 0.85f, 1.0f, 1f);
 
-    private static final double AU = 1.496e11;
-
     private final BitmapFont font;
     private final WorldCamera camera;
     private final PhysicsEngine physics;
     private final ShapeRenderer shapeRenderer;
     private final GlyphLayout layout = new GlyphLayout();
-    private List<BeltData> belts = List.of();
+    private List<Belt> belts = List.of();
 
     public BodyTooltip(FontManager fontManager, WorldCamera camera, PhysicsEngine physics,
             ShapeRenderer shapeRenderer) {
@@ -57,7 +55,7 @@ public class BodyTooltip {
         this.shapeRenderer = shapeRenderer;
     }
 
-    public void setBelts(List<BeltData> belts) {
+    public void setBelts(List<Belt> belts) {
         this.belts = belts;
     }
 
@@ -77,7 +75,7 @@ public class BodyTooltip {
         if (hovered != null) {
             lines = buildLines(hovered);
         } else {
-            BeltData belt = findHoveredBelt(mouseX, mouseYFlipped);
+            Belt belt = findHoveredBelt(mouseX, mouseYFlipped);
             if (belt == null)
                 return;
             lines = buildBeltLines(belt);
@@ -163,14 +161,70 @@ public class BodyTooltip {
     // -------------------------------------------------------------------------
 
     private SimObject findHovered(int mouseX, int mouseYFlipped, List<SimObject> objects) {
+        boolean freeCam = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+        if (freeCam) {
+            return findHovered3D(mouseX, mouseYFlipped, objects);
+        }
+        return findHovered2D(mouseX, mouseYFlipped, objects);
+    }
+
+    /**
+     * FREE_CAM: ancestor wins over descendant when descendant is a small dot
+     * (screen radius < DOT_THRESHOLD_PX) AND both have comparable screen size
+     * (ratio > DOT_RATIO_MIN). Otherwise closest to camera wins.
+     */
+    private static final float DOT_THRESHOLD_PX = 15f;
+    private static final float DOT_RATIO_MIN = 0.3f;
+
+    private SimObject findHovered3D(int mouseX, int mouseYFlipped, List<SimObject> objects) {
+        CelestialBody best = null;
+        double bestDepth = Double.MAX_VALUE;
+        float bestScreenR = 0;
+
+        for (SimObject obj : objects) {
+            if (!obj.active || !(obj instanceof CelestialBody cb))
+                continue;
+            com.badlogic.gdx.math.Vector2 sc = camera.worldToScreen(cb.x, cb.y, cb.z);
+            float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z);
+            float dx = mouseX - sc.x;
+            float dy = mouseYFlipped - sc.y;
+            if (dx * dx + dy * dy > (screenR + HOVER_EXTRA_PX) * (screenR + HOVER_EXTRA_PX))
+                continue;
+            double depth = camera.depthOf(cb.x, cb.y, cb.z);
+            if (best == null) {
+                best = cb;
+                bestDepth = depth;
+                bestScreenR = screenR;
+            } else if (bestScreenR < DOT_THRESHOLD_PX && isAncestor(cb, best)
+                    && bestScreenR / (screenR + 1e-6f) > DOT_RATIO_MIN) {
+                // best is a small dot comparable in size to its ancestor → ancestor wins
+                best = cb;
+                bestDepth = depth;
+                bestScreenR = screenR;
+            } else if (screenR < DOT_THRESHOLD_PX && isAncestor(best, cb)
+                    && screenR / (bestScreenR + 1e-6f) > DOT_RATIO_MIN) {
+                // cb is a small dot comparable in size to its ancestor (best) → keep best
+            } else if (depth < bestDepth) {
+                best = cb;
+                bestDepth = depth;
+                bestScreenR = screenR;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * TOP_VIEW: ancestor wins over descendant; otherwise nearest on screen wins.
+     */
+    private SimObject findHovered2D(int mouseX, int mouseYFlipped, List<SimObject> objects) {
         CelestialBody best = null;
         float bestDist = Float.MAX_VALUE;
 
         for (SimObject obj : objects) {
             if (!obj.active || !(obj instanceof CelestialBody cb))
                 continue;
-            com.badlogic.gdx.math.Vector2 sc = camera.worldToScreen(cb.x, cb.y);
-            float screenR = camera.worldRadiusToScreen(cb.radius) + HOVER_EXTRA_PX;
+            com.badlogic.gdx.math.Vector2 sc = camera.worldToScreen(cb.x, cb.y, cb.z);
+            float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z) + HOVER_EXTRA_PX;
             float dx = mouseX - sc.x;
             float dy = mouseYFlipped - sc.y;
             float dist = (float) Math.sqrt(dx * dx + dy * dy);
@@ -204,7 +258,6 @@ public class BodyTooltip {
     private String[] buildLines(SimObject obj) {
         if (obj instanceof CelestialBody cb) {
             String typeName = cb.bodyType == null ? "Body" : capitalize(cb.bodyType.name());
-            double distAU = Math.sqrt(cb.x * cb.x + cb.y * cb.y) / AU;
             double speedKms = cb.speed() / 1000.0;
 
             // Collect direct moons (bodies whose parent == this body).
@@ -217,12 +270,58 @@ public class BodyTooltip {
                 }
             }
 
+            // Find the root star for distance calculation.
+            CelestialBody star = cb;
+            while (star.parent != null)
+                star = star.parent;
+
             java.util.List<String> lines = new java.util.ArrayList<>();
             lines.add(cb.name + "  [" + typeName + "]");
             lines.add("Mass\t" + formatSci(cb.mass) + " kg");
             lines.add("Radius\t" + String.format("%.0f km", cb.radius / 1000.0));
-            lines.add("Dist/Sun\t" + String.format("%.4f AU", distAU));
+
+            // Distance from parent star (skip for the star itself).
+            if (cb != star) {
+                double dx = cb.x - star.x, dy = cb.y - star.y, dz = cb.z - star.z;
+                double distM = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                lines.add("Dist.Star\t" + FormatUtils.formatDistance(distM));
+            } else {
+                // Star: show barycentric drift from origin in adaptive SI units.
+                double driftM = Math.sqrt(cb.x * cb.x + cb.y * cb.y + cb.z * cb.z);
+                lines.add("Drift\t" + FormatUtils.formatDistance(driftM));
+            }
+
             lines.add("Speed\t" + String.format("%.2f km/s", speedKms));
+
+            // Orbital period from vis-viva (osculant semi-major axis).
+            if (cb.parent != null && cb.semiMajorAxis > 0) {
+                double G = 6.674e-11;
+                double dx = cb.x - cb.parent.x, dy = cb.y - cb.parent.y, dz = cb.z - cb.parent.z;
+                double r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                double dvx = cb.vx - cb.parent.vx, dvy = cb.vy - cb.parent.vy, dvz = cb.vz - cb.parent.vz;
+                double v2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                double mu = G * cb.parent.mass;
+                double a_osc = 1.0 / (2.0 / r - v2 / mu); // vis-viva for a
+                if (a_osc > 0) {
+                    double T_sec = 2.0 * Math.PI * Math.sqrt(a_osc * a_osc * a_osc / mu);
+                    lines.add("Orb.Period\t" + formatPeriod(T_sec));
+                }
+                lines.add("Orb.Incl.\t" + formatDegrees(cb.inclination));
+            }
+
+            // Rotation: equatorial surface speed + direction.
+            if (cb.rotationPeriod != 0) {
+                double absPeriod = Math.abs(cb.rotationPeriod);
+                double circumference = 2.0 * Math.PI * cb.radius; // metres
+                double eqSpeedKmh = (circumference / absPeriod) * 3.6; // m/s → km/h
+                double degPerHour = 360.0 / (absPeriod / 3600.0); // °/h
+                boolean retrograde = cb.rotationPeriod < 0;
+                String dir = retrograde ? "CW" : "CCW";
+                lines.add("Rotation\t" + String.format("%.1f km/h (%.2f°/h) %s", eqSpeedKmh, degPerHour, dir));
+                lines.add("Rot.Period\t" + formatPeriod(absPeriod));
+                lines.add("Tilt\t" + formatDegrees(cb.obliquity));
+            }
+
             if (!moonNames.isEmpty()) {
                 StringBuilder sb = new StringBuilder();
                 int show = Math.min(2, moonNames.size());
@@ -250,6 +349,22 @@ public class BodyTooltip {
         int exp = (int) Math.floor(Math.log10(Math.abs(v)));
         double mantissa = v / Math.pow(10, exp);
         return String.format("%.3f\u00d710^%d", mantissa, exp);
+    }
+
+    private String formatPeriod(double seconds) {
+        double absSeconds = Math.abs(seconds);
+        double days = absSeconds / 86400.0;
+        if (days >= 365.25) {
+            return String.format("%.2f yr", days / 365.25);
+        }
+        if (days >= 1.0) {
+            return String.format("%.2f d", days);
+        }
+        return String.format("%.2f h", absSeconds / 3600.0);
+    }
+
+    private String formatDegrees(double radians) {
+        return String.format("%.2f°", Math.toDegrees(radians));
     }
 
     /**
@@ -324,12 +439,12 @@ public class BodyTooltip {
         }
     }
 
-    private BeltData findHoveredBelt(int mouseX, int mouseYFlipped) {
+    private Belt findHoveredBelt(int mouseX, int mouseYFlipped) {
         double[] worldPos = camera.screenToWorld(mouseX, mouseYFlipped);
         double mx = worldPos[0];
         double my = worldPos[1];
 
-        for (BeltData belt : belts) {
+        for (Belt belt : belts) {
             // Find parent body position.
             double px = 0, py = 0;
             for (SimObject obj : physics.getObjects()) {
@@ -349,7 +464,7 @@ public class BodyTooltip {
         return null;
     }
 
-    private String[] buildBeltLines(BeltData belt) {
+    private String[] buildBeltLines(Belt belt) {
         String displayName;
         if (belt.name.equals("AsteroidBelt"))
             displayName = "Main Asteroid Belt";
@@ -358,8 +473,8 @@ public class BodyTooltip {
         else
             displayName = belt.name;
 
-        double innerAU = belt.innerRadius / AU;
-        double outerAU = belt.outerRadius / AU;
+        double innerAU = belt.innerRadius / FormatUtils.AU;
+        double outerAU = belt.outerRadius / FormatUtils.AU;
         double widthAU = outerAU - innerAU;
         return new String[] {
                 displayName + "  [Belt]",

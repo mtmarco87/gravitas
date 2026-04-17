@@ -4,6 +4,9 @@ verify_jpl.py — Verify solar_system.json against NASA/JPL official data.
 
 Orbital elements:  fetched from JPL Horizons API (osculating, J2000.0 epoch, ecliptic plane).
 Physical data:     hardcoded from NASA Planetary Fact Sheets & JPL SSD.
+Spin-axis data:    hardcoded from NAIF pck00011.tpc at J2000 where available,
+                   plus explicit documented fallbacks for bodies without a
+                   published NAIF/JPL pole solution.
 
 Usage:  python3 verify_jpl.py
 """
@@ -39,6 +42,8 @@ HORIZONS = {
     "Pluto": ("999", "500@10"),
     "Charon": ("901", "500@999"),
     "Ceres": ("2000001", "500@10"),
+    "Makemake": ("136472", "500@10"),
+    "Eris": ("136199", "500@10"),
 }
 
 # ─── NASA / JPL reference physical data ─────────────────────────────────
@@ -47,12 +52,26 @@ HORIZONS = {
 #   JPL Solar System Dynamics  https://ssd.jpl.nasa.gov/
 #   JPL Small-Body Database    https://ssd.jpl.nasa.gov/tools/sbdb_lookup.html
 PHYS = {
-    "Sun": dict(mass=1.98892e30, radius=695_700_000, rotationPeriod=2_192_832),
-    "Mercury": dict(mass=3.3011e23, radius=2_439_700, rotationPeriod=5_067_032),
+    "Sun": dict(
+        mass=1.98892e30,
+        radius=695_700_000,
+        rotationPeriod=2_192_832,
+        obliquity=0.12654,
+        obliquityDirection=4.99499,
+    ),
+    "Mercury": dict(
+        mass=3.3011e23,
+        radius=2_439_700,
+        rotationPeriod=5_067_032,
+        obliquity=0.00059,
+        obliquityDirection=4.90556,
+    ),
     "Venus": dict(
         mass=4.8675e24,
         radius=6_051_800,
         rotationPeriod=-20_996_798,
+        obliquity=3.09508,
+        obliquityDirection=4.76161,
         atmosphereScaleHeight=15_900,
         atmosphereDensitySeaLevel=65.0,
     ),
@@ -60,14 +79,24 @@ PHYS = {
         mass=5.9722e24,
         radius=6_371_000,
         rotationPeriod=86_164,
+        obliquity=0.40910,
+        obliquityDirection=0,
         atmosphereScaleHeight=8_500,
         atmosphereDensitySeaLevel=1.225,
     ),
-    "Moon": dict(mass=7.342e22, radius=1_737_400, rotationPeriod=2_360_592),
+    "Moon": dict(
+        mass=7.342e22,
+        radius=1_737_400,
+        rotationPeriod=2_360_592,
+        obliquity=0.11659,
+        obliquityDirection=4.71234,
+    ),
     "Mars": dict(
         mass=6.4171e23,
         radius=3_389_500,
         rotationPeriod=88_643,
+        obliquity=0.43964,
+        obliquityDirection=5.54531,
         atmosphereScaleHeight=11_100,
         atmosphereDensitySeaLevel=0.020,
     ),
@@ -77,6 +106,8 @@ PHYS = {
         mass=1.8982e27,
         radius=71_492_000,
         rotationPeriod=35_730,
+        obliquity=0.05464,
+        obliquityDirection=4.67849,
         atmosphereScaleHeight=27_000,
         atmosphereDensitySeaLevel=0.16,
         ringInnerRadius=122_000_000,
@@ -90,6 +121,8 @@ PHYS = {
         mass=5.6834e26,
         radius=60_268_000,
         rotationPeriod=38_362,
+        obliquity=0.46653,
+        obliquityDirection=0.70856,
         atmosphereScaleHeight=59_500,
         atmosphereDensitySeaLevel=0.19,
         ringInnerRadius=74_658_000,
@@ -107,6 +140,8 @@ PHYS = {
         mass=8.6810e25,
         radius=25_559_000,
         rotationPeriod=-62_064,
+        obliquity=1.70637,
+        obliquityDirection=4.49098,
         atmosphereScaleHeight=27_700,
         atmosphereDensitySeaLevel=0.42,
         ringInnerRadius=41_837_000,
@@ -116,6 +151,8 @@ PHYS = {
         mass=1.02413e26,
         radius=24_764_000,
         rotationPeriod=57_996,
+        obliquity=0.49427,
+        obliquityDirection=5.22499,
         atmosphereScaleHeight=19_700,
         atmosphereDensitySeaLevel=0.45,
         ringInnerRadius=41_900_000,
@@ -126,11 +163,21 @@ PHYS = {
         mass=1.303e22,
         radius=1_188_300,
         rotationPeriod=-551_857,
+        obliquity=2.13895,
+        obliquityDirection=2.32113,
         atmosphereScaleHeight=60_000,
         atmosphereDensitySeaLevel=1.5e-5,
     ),
     "Charon": dict(mass=1.586e21, radius=606_000, rotationPeriod=551_857),
-    "Ceres": dict(mass=9.3835e20, radius=469_700, rotationPeriod=32_668),
+    "Ceres": dict(
+        mass=9.3835e20,
+        radius=469_700,
+        rotationPeriod=32_668,
+        obliquity=0.06981,
+        obliquityDirection=5.08638,
+    ),
+    "Makemake": dict(mass=3.1e21, radius=715_000, rotationPeriod=82_176),
+    "Eris": dict(mass=1.6466e22, radius=1_163_000, rotationPeriod=93_240),
 }
 
 BELT_REF = {
@@ -283,6 +330,49 @@ SCALAR_FIELDS = [
     "beltOuterRadius",
 ]
 
+SPIN_AXIS_REF = {
+    "Sun": dict(type="absolute", rightAscension=4.99391059, declination=1.11474179),
+    "Mercury": dict(type="absolute", rightAscension=4.90455497, declination=1.07190269),
+    "Venus": dict(type="absolute", rightAscension=4.76056007, declination=1.17216313),
+    "Earth": dict(type="absolute", rightAscension=0.0, declination=1.57079633),
+    "Moon": dict(type="absolute", rightAscension=4.65754608, declination=1.14565337),
+    "Mars": dict(type="absolute", rightAscension=5.53739219, declination=0.95002662),
+    "Phobos": dict(type="absolute", rightAscension=5.54439995, declination=0.92303959),
+    "Deimos": dict(type="absolute", rightAscension=5.52670826, declination=0.93392429),
+    "Jupiter": dict(type="absolute", rightAscension=4.67848079, declination=1.12566424),
+    "Io": dict(type="absolute", rightAscension=4.67835506, declination=1.12573737),
+    "Europa": dict(type="absolute", rightAscension=4.67887866, declination=1.12591190),
+    "Ganymede": dict(
+        type="absolute", rightAscension=4.68731511, declination=1.12616330
+    ),
+    "Callisto": dict(
+        type="absolute", rightAscension=4.69004877, declination=1.13149695
+    ),
+    "Saturn": dict(type="absolute", rightAscension=0.70841169, declination=1.45799570),
+    "Titan": dict(type="absolute", rightAscension=0.68910311, declination=1.45609154),
+    "Enceladus": dict(
+        type="absolute", rightAscension=0.70965087, declination=1.45769899
+    ),
+    "Uranus": dict(type="absolute", rightAscension=4.49092415, declination=-0.26485371),
+    "Neptune": dict(type="absolute", rightAscension=5.22481765, declination=0.75852009),
+    "Triton": dict(type="absolute", rightAscension=5.20895231, declination=0.35434305),
+    "Pluto": dict(type="absolute", rightAscension=2.32116573, declination=-0.10756464),
+    "Charon": dict(type="absolute", rightAscension=2.32116573, declination=-0.10756464),
+    "Ceres": dict(type="absolute", rightAscension=5.08620360, declination=1.16525162),
+    "Makemake": dict(
+        type="orbital-relative",
+        tilt=0.0,
+        azimuth=0.0,
+        note="No unique published NAIF/JPL/IAU pole solution; explicit orbital-relative zero-tilt fallback",
+    ),
+    "Eris": dict(
+        type="absolute",
+        rightAscension=0.63128559,
+        declination=0.77684605,
+        note="Proxy from the published Dysnomia orbit pole (Holler et al. 2021)",
+    ),
+}
+
 # JSON field → (Horizons key, is_angle, value_converter_to_json_units)
 ORBITAL_MAP = {
     "semiMajorAxis": ("A", False, lambda x: x * AU_M),
@@ -294,13 +384,33 @@ ORBITAL_MAP = {
 }
 
 
+def get_scalar_field(body, field):
+    """Read a scalar verification field from the current JSON schema.
+
+    Supports the current nested ring object and the previous flat ring fields
+    so the verifier remains resilient across schema migrations.
+    """
+    ring = body.get("ring") or {}
+
+    if field == "ringInnerRadius":
+        return ring.get("innerRadius", body.get(field))
+    if field == "ringOuterRadius":
+        return ring.get("outerRadius", body.get(field))
+
+    return body.get(field)
+
+
+def get_spin_axis(body):
+    return body.get("spinAxis")
+
+
 def main():
     json_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "..",
         "assets",
         "data",
-        "solar_system",
+        "systems",
         "solar_system.json",
     )
     with open(json_path) as f:
@@ -342,7 +452,7 @@ def main():
         for field in SCALAR_FIELDS:
             if field not in combined:
                 continue
-            jv = b.get(field)
+            jv = get_scalar_field(b, field)
             rv = combined[field]
             if jv is None:
                 continue
@@ -372,6 +482,95 @@ def main():
             print(
                 f"  │  {field:>30s}  JSON={fmt_val(jv):>15s}  REF={fmt_val(rv):>15s}   Δ={p:7.3f}%  {s}"
             )
+
+        print("  └─")
+
+    # ── Part 1B: Spin-axis data ────────────────────────────────────────
+    print(f"\n{'─' * W}")
+    print("  PART 1B — SPIN AXIS  (vs NAIF pck00011 @ J2000 and documented exceptions)")
+    print(f"{'─' * W}")
+
+    spin_tol_deg = 0.05
+
+    for name in body_order:
+        ref = SPIN_AXIS_REF.get(name)
+        if not ref:
+            continue
+        body = bodies[name]
+        axis = get_spin_axis(body)
+        print(f"\n  ┌─ {name}")
+
+        total += 1
+        if axis is None:
+            issues.append((name, "spinAxis", None, ref["type"], "missing"))
+            print(
+                f"  │  {'spinAxis.type':>30s}  JSON={'<missing>':>15s}  REF={ref['type']:>15s}   Δ={'missing':>7s}  ✗"
+            )
+            print("  └─")
+            continue
+
+        json_type = axis.get("type")
+        ref_type = ref["type"]
+        if json_type == ref_type:
+            ok += 1
+            s = "✓"
+        else:
+            s = "✗"
+            issues.append((name, "spinAxis.type", json_type, ref_type, "mismatch"))
+        print(
+            f"  │  {'spinAxis.type':>30s}  JSON={str(json_type):>15s}  REF={ref_type:>15s}   Δ={'-':>7s}  {s}"
+        )
+
+        if ref_type == "absolute":
+            for field in ("rightAscension", "declination"):
+                total += 1
+                jv = axis.get(field)
+                rv = ref[field]
+                if jv is None:
+                    issues.append((name, f"spinAxis.{field}", None, rv, "missing"))
+                    print(
+                        f"  │  {('spinAxis.' + field):>30s}  JSON={'<missing>':>15s}  REF={fmt_val(rv):>15s}   Δ={'missing':>7s}  ✗"
+                    )
+                    continue
+
+                d_rad = ang_diff(jv, rv)
+                d_deg = d_rad / DEG2RAD
+                if d_deg <= spin_tol_deg:
+                    ok += 1
+                    s = "✓"
+                else:
+                    s = "✗"
+                    issues.append((name, f"spinAxis.{field}", jv, rv, f"{d_deg:.3f}°"))
+                print(
+                    f"  │  {('spinAxis.' + field):>30s}  JSON={jv:12.8f} rad  REF={rv:12.8f} rad   Δ={d_deg:8.3f}°  {s}"
+                )
+        elif ref_type == "orbital-relative":
+            for field in ("tilt", "azimuth"):
+                total += 1
+                jv = axis.get(field)
+                rv = ref[field]
+                if jv is None:
+                    issues.append((name, f"spinAxis.{field}", None, rv, "missing"))
+                    print(
+                        f"  │  {('spinAxis.' + field):>30s}  JSON={'<missing>':>15s}  REF={fmt_val(rv):>15s}   Δ={'missing':>7s}  ✗"
+                    )
+                    continue
+
+                d_rad = ang_diff(jv, rv)
+                d_deg = d_rad / DEG2RAD
+                if d_deg <= spin_tol_deg:
+                    ok += 1
+                    s = "✓"
+                else:
+                    s = "✗"
+                    issues.append((name, f"spinAxis.{field}", jv, rv, f"{d_deg:.3f}°"))
+                print(
+                    f"  │  {('spinAxis.' + field):>30s}  JSON={jv:12.8f} rad  REF={rv:12.8f} rad   Δ={d_deg:8.3f}°  {s}"
+                )
+
+        note = ref.get("note")
+        if note:
+            print(f"  │  {'note':>30s}  {note}")
 
         print("  └─")
 

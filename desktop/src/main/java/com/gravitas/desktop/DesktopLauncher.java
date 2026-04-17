@@ -2,10 +2,10 @@ package com.gravitas.desktop;
 
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3Application;
 import com.badlogic.gdx.backends.lwjgl3.Lwjgl3ApplicationConfiguration;
-import com.gravitas.GravitasGame;
+import com.gravitas.Gravitas;
 
 /**
- * Desktop entry point — configures the LWJGL3 window and launches GravitasGame.
+ * Desktop entry point — configures the LWJGL3 window and launches Gravitas.
  */
 public class DesktopLauncher {
 
@@ -17,8 +17,9 @@ public class DesktopLauncher {
         config.setResizable(true);
         config.useVsync(true);
         config.setForegroundFPS(60);
+        config.setBackBufferConfig(8, 8, 8, 8, 24, 8, 0);
         config.setWindowIcon("textures/icon.png"); // placeholder — won't crash if missing
 
-        new Lwjgl3Application(new GravitasGame(), config);
+        new Lwjgl3Application(new Gravitas(), config);
     }
 }

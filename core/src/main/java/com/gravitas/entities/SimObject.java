@@ -16,10 +16,12 @@ public abstract class SimObject {
     /** Position in the heliocentric inertial frame (meters). */
     public double x;
     public double y;
+    public double z;
 
     /** Velocity (m/s). */
     public double vx;
     public double vy;
+    public double vz;
 
     /** Total mass (kg). */
     public double mass;
@@ -32,6 +34,7 @@ public abstract class SimObject {
      */
     public double ax;
     public double ay;
+    public double az;
 
     /** If false, this object is excluded from integration (e.g. destroyed). */
     public boolean active = true;
@@ -53,18 +56,20 @@ public abstract class SimObject {
     public void resetAcceleration() {
         ax = 0.0;
         ay = 0.0;
+        az = 0.0;
     }
 
     /** Distance (meters) from this object to another. */
     public double distanceTo(SimObject other) {
         double dx = other.x - x;
         double dy = other.y - y;
-        return Math.sqrt(dx * dx + dy * dy);
+        double dz = other.z - z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
     /** Speed (m/s). */
     public double speed() {
-        return Math.sqrt(vx * vx + vy * vy);
+        return Math.sqrt(vx * vx + vy * vy + vz * vz);
     }
 
     @Override

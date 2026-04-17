@@ -4,7 +4,7 @@ package com.gravitas.entities;
  * Static data describing a statistical asteroid/debris belt (e.g. Main Belt,
  * Kuiper Belt). Not physics-simulated; rendered as a cloud of dots.
  */
-public class BeltData {
+public class Belt {
 
     public final String name;
     /** Name of the parent body this belt orbits (e.g. "Sun"). */
@@ -18,7 +18,7 @@ public class BeltData {
     /** Display colour (RGBA packed int). */
     public final int color;
 
-    public BeltData(String name, String parentName, double innerRadius, double outerRadius,
+    public Belt(String name, String parentName, double innerRadius, double outerRadius,
             int particleCount, int color) {
         this.name = name;
         this.parentName = parentName;

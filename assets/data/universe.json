@@ -1,0 +1,9 @@
+{
+  "systems": [
+    {
+      "id": "solar_system",
+      "description": "Solar System - Sun, 8 planets, dwarf planets, major moons, asteroid and Kuiper belts.",
+      "origin": [0, 0, 0]
+    }
+  ]
+}

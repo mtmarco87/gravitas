@@ -86,6 +86,13 @@ public class PhysicsEngine {
         rebuildArray();
     }
 
+    /** Removes all objects and resets simulation time to zero. */
+    public void clearObjects() {
+        objects.clear();
+        rebuildArray();
+        simulationTime = 0.0;
+    }
+
     public List<SimObject> getObjects() {
         return objects;
     }
@@ -168,7 +175,8 @@ public class PhysicsEngine {
 
                 double dx = a.x - b.x;
                 double dy = a.y - b.y;
-                double distSq = dx * dx + dy * dy;
+                double dz = a.z - b.z;
+                double distSq = dx * dx + dy * dy + dz * dz;
                 double radSum = a.radius + b.radius;
 
                 if (distSq < radSum * radSum) {
@@ -238,7 +246,7 @@ public class PhysicsEngine {
     // Utility: nearest body to a world-space point
     // -------------------------------------------------------------------------
 
-    public CelestialBody nearestBodyTo(double wx, double wy) {
+    public CelestialBody nearestBodyTo(double wx, double wy, double wz) {
         CelestialBody nearest = null;
         double minDist = Double.MAX_VALUE;
         for (SimObject obj : objectArray) {
@@ -246,7 +254,8 @@ public class PhysicsEngine {
                 continue;
             double dx = cb.x - wx;
             double dy = cb.y - wy;
-            double d = Math.sqrt(dx * dx + dy * dy);
+            double dz = cb.z - wz;
+            double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (d < minDist) {
                 minDist = d;
                 nearest = cb;

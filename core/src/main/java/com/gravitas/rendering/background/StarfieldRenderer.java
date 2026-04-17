@@ -1,4 +1,4 @@
-package com.gravitas.rendering;
+package com.gravitas.rendering.background;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
@@ -23,7 +23,7 @@ import java.util.Random;
  * - modulate each star's brightness with multi-frequency sine (twinkle)
  * - gently pulse nebula luminosity (breathing glow)
  */
-public class StarfieldBackground {
+public class StarfieldRenderer {
 
     private static final int TEX_SIZE = 2048;
     private static final float OPACITY = 0.4f;
@@ -33,7 +33,7 @@ public class StarfieldBackground {
     private final ShaderProgram shader;
     private float elapsedTime;
 
-    public StarfieldBackground() {
+    public StarfieldRenderer() {
         // Generate the two layers — unique each run.
         Random rng = new Random(System.nanoTime());
         baseTexture = createTexture(generateBasePixmap(rng));

@@ -1,6 +1,6 @@
 # Gravitas — Orbital Simulation Sandbox 🌍🪐
 
-A real-time 2D stellar systems simulator featuring accurate N-body physics, time warp, and interactive visualization.
+A real-time stellar systems simulator featuring accurate N-body physics, dual camera modes (top-down & free-cam), time warp, and interactive visualization.
 
 ## Table of Contents
 
@@ -47,6 +47,9 @@ The project is designed for interactively exploring orbital mechanics: follow pl
 - ✅ **Scientific notation** with superscript exponents (e.g. 5.972×10²⁴ kg)
 - ✅ **Measurement tool** — click-to-click distance in m/km/Mm/Gm/AU
 - ✅ **Procedural starfield** background with ~3700 stars and nebulae
+- ✅ **3D physics** — full 6-DOF state vectors with ecliptic-plane inclinations
+- ✅ **Dual camera modes** — Top-View (2D) and Free-Cam (3D orbit) with `C` key toggle
+- ✅ **Orbits 2D flattening** — flatten orbits to the ecliptic with `L` key
 - ✅ **Full HUD** — sim time, warp, scale bar, status indicators, controls legend
 
 ## Environment Setup
@@ -86,24 +89,29 @@ The project is designed for interactively exploring orbital mechanics: follow pl
 ./gradlew :desktop:run
 ```
 
-The application starts with the solar system loaded from `assets/data/solar_system.json`, initial zoom at ~1.25 AU, visual scale active, and time warp at 1,000,000×.
+The application starts by loading the universe manifest (`assets/data/universe.json`), which references the solar system data in `assets/data/solar_system/solar_system.json`. Initial zoom is ~1.25 AU, visual scale active, and time warp at 1,000,000×.
 
 ### Controls
 
 | Key / Action      | Function                     |
 | ----------------- | ---------------------------- |
 | `SPACE`           | Pause / resume simulation    |
-| `1`–`0`           | Time warp presets (1× → 1B×) |
-| `,` `.`           | Previous / next warp preset  |
-| `Scroll`          | Zoom toward cursor           |
+| `1`–`0` `,` `.`   | Time warp presets (1× → 1B×) |
+| `Scroll`          | Zoom                         |
 | `Drag` / `Arrows` | Pan camera                   |
-| `2×Click`         | Follow celestial body        |
+| `Click`           | Select body                  |
+| `Dbl-click`       | Follow body + zoom           |
 | `F`               | Clear follow                 |
 | `V`               | Toggle visual scale          |
 | `T`               | Toggle orbit predictors      |
 | `M`               | Measurement tool             |
+| `C`               | Toggle camera (2D/3D)        |
+| `L`               | Toggle orbits (2D/3D)        |
+| `X`               | Toggle celestial FX          |
 | `H`               | Show/hide controls legend    |
 | `Q`               | Quit                         |
+
+In **Free-Cam mode** (3D): right-drag to orbit the camera, scroll to dolly.
 
 ## Architecture
 
@@ -117,28 +125,31 @@ The application starts with the solar system loaded from `assets/data/solar_syst
 │
 ├── assets/                    # Runtime resources
 │   ├── data/
-│   │   └── solar_system.json  # Celestial body definitions (orbital elements)
+│   │   ├── universe.json      # Universe manifest (systems list + origins)
+│   │   └── systems/
+│   │       └── solar_system.json  # Celestial body definitions (orbital elements)
 │   ├── fonts/                 # TrueType fonts
 │   └── textures/              # Icons and textures
 │
 ├── core/                      # Core module (platform-independent)
 │   └── src/main/java/com/gravitas/
-│       ├── GravitasGame.java          # Entry point, game loop
+│       ├── Gravitas.java              # Entry point, game loop
 │       ├── data/
-│       │   └── SolarSystemLoader.java # JSON parser → celestial bodies (Kepler → Cartesian)
+│       │   ├── UniverseLoader.java    # Manifest parser → multi-system loader
+│       │   └── SystemLoader.java      # JSON parser → celestial bodies (3D Kepler → Cartesian)
 │       ├── entities/
 │       │   ├── SimObject.java         # Base entity (position, velocity, mass)
 │       │   └── CelestialBody.java     # Celestial body (type, color, parent)
 │       ├── physics/
 │       │   ├── PhysicsEngine.java     # Main engine, time warp, collisions
-│       │   ├── RK4Integrator.java     # 4th-order Runge-Kutta integrator
+│       │   ├── RK4Integrator.java     # 6-DOF Runge-Kutta integrator (x,y,z,vx,vy,vz)
 │       │   └── AtmosphericModel.java  # Atmospheric model (drag)
 │       ├── rendering/
 │       │   ├── SimRenderer.java       # Body + trail rendering + visual scale
-│       │   ├── WorldCamera.java       # 2D camera with zoom/pan/follow
+│       │   ├── WorldCamera.java       # Dual-mode camera (Top-View + Free-Cam 3D)
 │       │   ├── OrbitPredictor.java    # Predictive Keplerian ellipses (EMA smoothing)
 │       │   ├── OrbitTrail.java        # Ring buffer for orbit trails
-│       │   ├── StarfieldBackground.java # Procedural star + nebula background
+│       │   ├── StarfieldRenderer.java  # Procedural star + nebula background
 │       │   └── FontManager.java       # FreeType font management
 │       └── ui/
 │           ├── GravitasInputProcessor.java # Input handler (keyboard, mouse, gestures)
@@ -153,7 +164,7 @@ The application starts with the solar system loaded from `assets/data/solar_syst
 
 ### Physics Engine
 
-- **Integration**: RK4 (4th-order Runge-Kutta) for accuracy on eccentric orbits
+- **Integration**: RK4 (4th-order Runge-Kutta), 6-DOF state vectors (x,y,z,vx,vy,vz)
 - **Adaptive timestep**: `PHYSICS_DT = 60s` base, scaled up to `MAX_STEP_DT = 200s` at high warp
 - **Step budget**: 8 to 500 steps/frame, balancing precision and performance
 - **Gravitation**: Full N-body (O(n²) force evaluation per step)
@@ -171,7 +182,7 @@ The application starts with the solar system loaded from `assets/data/solar_syst
 
 ## Solar System Data
 
-Celestial bodies are defined in `assets/data/solar_system.json` using Keplerian orbital elements:
+Celestial bodies are defined in `assets/data/systems/solar_system.json` using Keplerian orbital elements:
 
 - `semiMajorAxis` — semi-major axis (m)
 - `eccentricity` — orbital eccentricity
@@ -184,7 +195,7 @@ Celestial bodies are defined in `assets/data/solar_system.json` using Keplerian 
 - `color` — RGBA hex color
 - `parent` — parent body (for moons)
 
-In the current 2D bootstrap, the loader derives the in-plane longitude of periapsis as $\varpi = \Omega + \omega$ and then converts the Keplerian state to Cartesian position and velocity.
+The loader performs a full 3D Keplerian → Cartesian conversion using the perifocal-to-ecliptic rotation matrix $R_z(-\Omega) \cdot R_x(-i) \cdot R_z(-\omega)$, producing position and velocity vectors with non-zero z-components for inclined orbits. A legacy 2D mode (key `L`) flattens all inclinations to zero.
 
 ## FAQs
 
@@ -227,7 +238,7 @@ VS_OVERLAP_TOLERANCE_PX = 3f;    // Overlap tolerance before inhibiting V
 
 ### Adding Celestial Bodies
 
-Add a new object to `assets/data/solar_system.json`:
+Add a new object to `assets/data/systems/solar_system.json`:
 
 ```json
 {
@@ -271,7 +282,7 @@ java -version
 
 #### Black screen at startup
 
-Verify that `assets/data/solar_system.json` exists and is valid JSON. The app logs errors to stdout.
+Verify that `assets/data/universe.json` and `assets/data/systems/solar_system.json` exist and are valid JSON. The app logs errors to stdout.
 
 #### Low performance
 

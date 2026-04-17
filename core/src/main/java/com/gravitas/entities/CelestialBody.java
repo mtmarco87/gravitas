@@ -5,6 +5,57 @@ package com.gravitas.entities;
  */
 public class CelestialBody extends SimObject {
 
+    /** Body colour profile mirroring the nested JSON color object. */
+    public static final class ColorProfile {
+        /** Base body colour used for HUD/fallback rendering. */
+        public int base;
+
+        /** Atmosphere/rim glow colour. Optional. */
+        public int glow;
+
+        /** Stellar glow core colour. Optional. */
+        public int core;
+
+        /** Stellar glow edge/corona colour. Optional. */
+        public int edge;
+    }
+
+    /** Ring layer profile mirroring the nested JSON ring object. */
+    public static final class RingProfile {
+        /** Ring inner radius from body centre (meters). 0 = no rings. */
+        public double innerRadius;
+
+        /** Ring outer radius from body centre (meters). 0 = no rings. */
+        public double outerRadius;
+
+        /**
+         * Ring texture filename (e.g. "saturn_rings.png"). Null = procedural colour.
+         */
+        public String texture;
+
+        /** Ring base colour for procedural rings (RGBA packed int). */
+        public int color;
+
+        /** Ring opacity [0,1]. */
+        public float opacity;
+    }
+
+    /** Cloud layer profile mirroring the nested JSON clouds object. */
+    public static final class CloudProfile {
+        /** Whether to render a procedural cloud layer over this body. */
+        public boolean enabled;
+
+        /** Cloud colour (RGBA packed int). White = realistic Earth clouds. */
+        public int color = 0xFFFFFFFF;
+    }
+
+    /** Resolved spin-axis vector in world/ecliptic coordinates. */
+    public static final class SpinAxis {
+        public double worldX;
+        public double worldY;
+        public double worldZ = 1.0;
+    }
+
     public enum BodyType {
         STAR, PLANET, MOON, DWARF_PLANET, ASTEROID
     }
@@ -20,19 +71,23 @@ public class CelestialBody extends SimObject {
     /** Sea-level atmospheric density (kg/m³). 0 = no atmosphere. */
     public double atmosphereDensitySeaLevel;
 
-    /** Colour for 2D rendering (RGBA packed int, libGDX convention). */
-    public int displayColor;
+    /** Nested body colours, mirroring the JSON color object. */
+    public final ColorProfile color = new ColorProfile();
+
+    /** Nested ring layer, mirroring the JSON ring object. */
+    public final RingProfile ring = new RingProfile();
+
+    /** Nested cloud layer, mirroring the JSON clouds object. */
+    public final CloudProfile clouds = new CloudProfile();
+
+    /** Resolved runtime spin axis. */
+    public final SpinAxis spinAxis = new SpinAxis();
 
     /**
      * Texture filename relative to the stellar system textures folder (e.g.
      * "earth.jpg"). Null = use flat colour.
      */
     public String textureFile;
-
-    /**
-     * Atmosphere glow colour (RGBA packed int). Null/0 = derive from displayColor.
-     */
-    public int atmosphereGlowColor;
 
     /** The body this object orbits (null for the star). */
     public CelestialBody parent;
@@ -57,34 +112,16 @@ public class CelestialBody extends SimObject {
     /** Argument of periapsis ω (radians). Longitude of periapsis is Ω + ω. */
     public double argumentOfPeriapsis;
 
-    /** Ring inner radius from body centre (meters). 0 = no rings. */
-    public double ringInnerRadius;
-
-    /** Ring outer radius from body centre (meters). 0 = no rings. */
-    public double ringOuterRadius;
-
-    /**
-     * Ring texture filename (e.g. "saturn_rings.png"). Null = procedural colour.
-     */
-    public String ringTexture;
-
-    /** Ring base colour for procedural rings (RGBA packed int). */
-    public int ringColor;
-
-    /** Ring opacity [0,1]. */
-    public float ringOpacity;
-
     /** Rotation period around own axis (seconds). Negative = retrograde. */
     public double rotationPeriod;
 
+    /**
+     * Derived axial tilt to the orbital plane (radians), resolved from spinAxis.
+     */
+    public double obliquity;
+
     /** Current axial rotation angle (radians), updated each tick. */
     public double rotationAngle;
-
-    /** Whether to render a procedural cloud layer over this body. */
-    public boolean cloudLayer;
-
-    /** Cloud colour (RGBA packed int). White = realistic Earth clouds. */
-    public int cloudColor;
 
     public CelestialBody(String name, BodyType bodyType, double mass, double radius) {
         super(name, mass, radius);
@@ -104,7 +141,7 @@ public class CelestialBody extends SimObject {
     }
 
     public boolean hasRings() {
-        return ringInnerRadius > 0 && ringOuterRadius > 0;
+        return ring.innerRadius > 0 && ring.outerRadius > 0;
     }
 
     /**
@@ -118,10 +155,11 @@ public class CelestialBody extends SimObject {
     }
 
     /** Altitude of a point in world space above this body's surface (meters). */
-    public double altitudeOf(double wx, double wy) {
+    public double altitudeOf(double wx, double wy, double wz) {
         double dx = wx - x;
         double dy = wy - y;
-        return Math.sqrt(dx * dx + dy * dy) - radius;
+        double dz = wz - z;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz) - radius;
     }
 
     @Override
