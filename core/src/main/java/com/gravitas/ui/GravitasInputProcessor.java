@@ -168,6 +168,7 @@ public class GravitasInputProcessor extends InputAdapter {
             }
             case Input.Keys.Q -> Gdx.app.exit();
             case Input.Keys.M -> {
+                clearPendingTapState();
                 if (measureTool != null)
                     measureTool.toggle();
             }
@@ -465,6 +466,11 @@ public class GravitasInputProcessor extends InputAdapter {
         if (button == Input.Buttons.LEFT) {
             touchDownScreenX = screenX;
             touchDownScreenY = screenY;
+            if (measureTool != null && measureTool.isActive()) {
+                clearPendingTapState();
+                leftDragging = false;
+                return true;
+            }
             camera.onPanBegin(screenX, screenY);
             leftDragging = true;
             return true;
@@ -487,6 +493,9 @@ public class GravitasInputProcessor extends InputAdapter {
             lastOrbitY = screenY;
             return true;
         }
+        if (measureTool != null && measureTool.isActive()) {
+            return true;
+        }
         if (leftDragging) {
             camera.onPanDrag(screenX, screenY);
             return true;
@@ -506,10 +515,15 @@ public class GravitasInputProcessor extends InputAdapter {
 
             // Measure tool intercepts clicks when active.
             if (measureTool != null && measureTool.isActive()) {
+                clearPendingTapState();
                 int dx = screenX - touchDownScreenX;
                 int dy = screenY - touchDownScreenY;
                 if (dx * dx + dy * dy <= 12 * 12) {
-                    measureTool.onClick(screenX, screenY);
+                    boolean worldLocked = Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT)
+                            || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT);
+                    boolean bodySnap = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+                            || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+                    measureTool.onClick(screenX, screenY, worldLocked, bodySnap);
                 }
                 return true;
             }
@@ -554,6 +568,12 @@ public class GravitasInputProcessor extends InputAdapter {
             return true;
         }
         return false;
+    }
+
+    private void clearPendingTapState() {
+        pendingSingleTapBody = null;
+        pendingSingleTapMs = -1;
+        lastTapTimeMs = -1;
     }
 
     // -------------------------------------------------------------------------

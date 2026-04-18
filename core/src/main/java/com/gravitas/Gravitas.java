@@ -104,7 +104,7 @@ public class Gravitas extends ApplicationAdapter {
         bodyTooltip.setBelts(universeLoader.getBelts());
 
         // --- Measure tool ---
-        measureTool = new MeasureTool(worldCamera, shapeRenderer, fontManager);
+        measureTool = new MeasureTool(worldCamera, physics, shapeRenderer, fontManager);
         inputProcessor.setMeasureTool(measureTool);
 
         // Default to free camera now that the 3D path is the primary mode.
