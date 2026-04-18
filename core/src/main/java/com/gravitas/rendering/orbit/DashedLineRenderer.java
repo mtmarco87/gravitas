@@ -52,8 +52,8 @@ public class DashedLineRenderer implements Disposable {
     public DashedLineRenderer() {
         ShaderProgram.pedantic = false;
         shader = new ShaderProgram(
-                Gdx.files.internal("shaders/dash_line.vert"),
-                Gdx.files.internal("shaders/dash_line.frag"));
+                Gdx.files.internal("shaders/orbit/dash_line.vert"),
+                Gdx.files.internal("shaders/orbit/dash_line.frag"));
         if (!shader.isCompiled()) {
             Gdx.app.error("DashedLineRenderer", "Shader compile failed:\n" + shader.getLog());
         }

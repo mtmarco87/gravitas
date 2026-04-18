@@ -42,8 +42,8 @@ public class StarfieldRenderer {
         // Compile starfield shader.
         ShaderProgram.pedantic = false;
         shader = new ShaderProgram(
-                Gdx.files.internal("shaders/starfield.vert"),
-                Gdx.files.internal("shaders/starfield.frag"));
+                Gdx.files.internal("shaders/background/starfield.vert"),
+                Gdx.files.internal("shaders/background/starfield.frag"));
         if (!shader.isCompiled()) {
             Gdx.app.error("StarfieldBG", "Shader compilation failed:\n" + shader.getLog());
         }

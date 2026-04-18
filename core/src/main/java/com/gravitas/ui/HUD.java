@@ -244,7 +244,7 @@ public class HUD {
                 "Drag/Arrows  " + dragArrowsAction,
                 "Dbl-click    follow body",
                 "F            clear follow",
-                "P            cycle follow frame",
+                "P            cycle follow mode",
                 "L            orbits 2D/3D",
                 "C            camera 2D/3D",
                 "Z            camera FOV 5/60/auto",

@@ -23,7 +23,7 @@ import com.gravitas.rendering.orbit.OrbitTrail;
  * V — toggle visual scale mode (exaggerated planet sizes)
  * T — cycle overlays (trails / trails+orbits / trails+orbits+spin / none)
  * Y — cycle orbit renderer (solid / CPU dashed / GPU dashed)
- * P — cycle follow frame (free / orbit upright / orbit plane / orbit axial /
+ * P — cycle follow mode (free / orbit upright / orbit plane / orbit axial /
  * rotation axial)
  * C — toggle camera mode (TOP_VIEW / FREE_CAM)
  * Z — toggle FREE_CAM FOV mode (adaptive / fixed)
