@@ -42,6 +42,7 @@ public class SimRenderer {
     private static final float SPIN_AXIS_MARKER_MIN_RADIUS_PX = 2.2f;
     private static final float SPIN_AXIS_MARKER_MAX_RADIUS_PX = 5.5f;
     private static final float NORTH_MARKER_ALPHA = 0.98f;
+    private static final double TOP_VIEW_AXIS_ALIGNMENT_EPSILON = 1e-6;
 
     /**
      * Visual-scale mode selector.
@@ -324,6 +325,7 @@ public class SimRenderer {
     private void renderSpinAxisOverlays(List<SimObject> objects, OrbitOcclusionMask occlusionMask,
             float[] screenRadii) {
         spinAxisMarkers.clear();
+        boolean topView = camera.getMode() == WorldCamera.CameraMode.TOP_VIEW;
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         for (int objectIndex = 0; objectIndex < objects.size(); objectIndex++) {
@@ -352,7 +354,7 @@ public class SimRenderer {
             double northY = body.y + scratchSpinAxis[1] * halfLength;
             double northZ = body.z + scratchSpinAxis[2] * halfLength;
 
-            if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM
+            if (!topView
                     && camera.depthOf(body.x, body.y, body.z) <= 0.0) {
                 continue;
             }
@@ -366,13 +368,25 @@ public class SimRenderer {
                     lerp(accentB, 1f, 0.32f),
                     SPIN_AXIS_LINE_ALPHA);
 
-            drawVisibleTrailSegmentClipped(southX, southY, southZ,
-                    northX, northY, northZ,
-                    body.x, body.y, body.z,
-                    selfClipRadius,
-                    occlusionMask);
+            boolean northVisible;
+            if (topView) {
+                northVisible = drawTopViewSpinAxisSegments(body,
+                        selfClipRadius,
+                        halfLength,
+                        scratchSpinAxis[0],
+                        scratchSpinAxis[1],
+                        scratchSpinAxis[2],
+                        occlusionMask);
+            } else {
+                drawVisibleTrailSegmentClipped(southX, southY, southZ,
+                        northX, northY, northZ,
+                        body.x, body.y, body.z,
+                        selfClipRadius,
+                        occlusionMask);
+                northVisible = isVisiblePoint(northX, northY, northZ, occlusionMask);
+            }
 
-            if (!isVisiblePoint(northX, northY, northZ, occlusionMask)) {
+            if (!northVisible) {
                 continue;
             }
 
@@ -407,6 +421,63 @@ public class SimRenderer {
                     marker.segments);
         }
         shapeRenderer.end();
+    }
+
+    private boolean drawTopViewSpinAxisSegments(CelestialBody body,
+            double bodyRadius,
+            double halfLength,
+            double axisX,
+            double axisY,
+            double axisZ,
+            OrbitOcclusionMask occlusionMask) {
+        double projectedAxisLength = Math.sqrt(axisX * axisX + axisY * axisY);
+
+        if (Math.abs(axisZ) <= TOP_VIEW_AXIS_ALIGNMENT_EPSILON) {
+            drawSpinAxisSubSegment(body, axisX, axisY, axisZ, -halfLength, -bodyRadius, occlusionMask);
+            drawSpinAxisSubSegment(body, axisX, axisY, axisZ, bodyRadius, halfLength, occlusionMask);
+            return true;
+        }
+
+        double projectedDiskExit = projectedAxisLength > TOP_VIEW_AXIS_ALIGNMENT_EPSILON
+                ? bodyRadius / projectedAxisLength
+                : Double.POSITIVE_INFINITY;
+
+        if (axisZ > 0.0) {
+            drawSpinAxisSubSegment(body, axisX, axisY, axisZ, bodyRadius, halfLength, occlusionMask);
+            if (projectedDiskExit < halfLength) {
+                drawSpinAxisSubSegment(body, axisX, axisY, axisZ, -halfLength, -projectedDiskExit, occlusionMask);
+            }
+            return true;
+        }
+
+        drawSpinAxisSubSegment(body, axisX, axisY, axisZ, -halfLength, -bodyRadius, occlusionMask);
+        if (projectedDiskExit < halfLength) {
+            drawSpinAxisSubSegment(body, axisX, axisY, axisZ, projectedDiskExit, halfLength, occlusionMask);
+            return true;
+        }
+        return false;
+    }
+
+    private void drawSpinAxisSubSegment(CelestialBody body,
+            double axisX,
+            double axisY,
+            double axisZ,
+            double t0,
+            double t1,
+            OrbitOcclusionMask occlusionMask) {
+        if (t1 - t0 <= 1e-9) {
+            return;
+        }
+
+        double wx0 = body.x + axisX * t0;
+        double wy0 = body.y + axisY * t0;
+        double wz0 = body.z + axisZ * t0;
+        double wx1 = body.x + axisX * t1;
+        double wy1 = body.y + axisY * t1;
+        double wz1 = body.z + axisZ * t1;
+        drawVisibleTrailSubSegment(wx0, wy0, wz0,
+                wx1, wy1, wz1,
+                occlusionMask);
     }
 
     private boolean isVisiblePoint(double wx, double wy, double wz, OrbitOcclusionMask occlusionMask) {
