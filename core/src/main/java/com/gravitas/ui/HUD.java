@@ -37,11 +37,16 @@ public class HUD {
     private static final Color TITLE_COLOR = new Color(0.72f, 0.92f, 0.98f, 1f);
     private static final Color STATUS_PILL_COLOR = new Color(0.14f, 0.46f, 0.28f, 0.92f);
     private static final Color STATUS_TEXT_COLOR = new Color(0.92f, 1.0f, 0.92f, 1f);
+    private static final Color FOLLOW_PANEL_COLOR = new Color(0.05f, 0.08f, 0.12f, 0.72f);
+    private static final Color FOLLOW_BADGE_COLOR = new Color(0.14f, 0.46f, 0.28f, 0.95f);
+    private static final Color FOLLOW_BADGE_TEXT_COLOR = new Color(0.92f, 1.0f, 0.92f, 1f);
 
     private static final float LEGEND_PAD = 10f;
     private static final Color PANEL_COLOR = new Color(0.04f, 0.04f, 0.08f, 0.50f);
     private static final float STATUS_PILL_PAD_X = 8f;
     private static final float STATUS_PILL_HEIGHT = 18f;
+    private static final float FOLLOW_CARD_PAD = 10f;
+    private static final float FOLLOW_CARD_SPACING = 8f;
 
     private final BitmapFont font;
     private final PhysicsEngine physics;
@@ -91,6 +96,9 @@ public class HUD {
         }
         y -= LINE_HEIGHT * 1.5f;
 
+        // ---- Follow target lock card ----
+        y = renderFollowTargetCard(batch, screenWidth, screenHeight, y);
+
         // ---- Selected object info ----
         if (selectedObject != null && selectedObject.active) {
             font.setColor(INFO_COLOR);
@@ -130,6 +138,97 @@ public class HUD {
         if (input.isCelestialFxMenuOpen()) {
             renderCelestialFxPopup(batch, screenWidth, screenHeight);
         }
+    }
+
+    private float renderFollowTargetCard(SpriteBatch batch, int screenWidth, int screenHeight, float topY) {
+        SimObject followTarget = camera.getFollowTarget();
+        if (followTarget == null || !followTarget.active) {
+            return topY;
+        }
+
+        String badge = "LOCK";
+        String title = followTarget.name;
+        String subtitle = buildFollowTargetSubtitle(followTarget);
+        java.util.ArrayList<String[]> detailRows = new java.util.ArrayList<>();
+        detailRows.add(new String[] { "Speed", String.format("%.2f km/s", followTarget.speed() / 1000.0) });
+
+        String[] referenceRow = buildFollowTargetReferenceRow(followTarget);
+        if (referenceRow != null) {
+            detailRows.add(referenceRow);
+        }
+
+        String[] relativeSpeedRow = buildFollowTargetRelativeSpeedRow(followTarget);
+        if (relativeSpeedRow != null) {
+            detailRows.add(relativeSpeedRow);
+        }
+
+        detailRows.add(new String[] { "Mode", camera.getFollowFrameMode().hudLabel() });
+
+        layout.setText(font, badge);
+        float badgeW = layout.width + STATUS_PILL_PAD_X * 2f;
+
+        layout.setText(font, title);
+        float titleW = layout.width;
+
+        layout.setText(font, subtitle);
+        float subtitleW = layout.width;
+        float labelColW = 0f;
+        float valueColW = 0f;
+        for (String[] detailRow : detailRows) {
+            layout.setText(font, detailRow[0]);
+            labelColW = Math.max(labelColW, layout.width);
+            layout.setText(font, detailRow[1]);
+            valueColW = Math.max(valueColW, layout.width);
+        }
+        float detailsW = labelColW + FOLLOW_CARD_SPACING + valueColW;
+
+        float panelW = Math.max(Math.max(subtitleW, detailsW), titleW + FOLLOW_CARD_SPACING + badgeW)
+                + FOLLOW_CARD_PAD;
+        float panelH = FOLLOW_CARD_PAD * 2f + LINE_HEIGHT * (detailRows.size() + 1.85f);
+        float panelX = MARGIN;
+        float panelY = topY - panelH;
+        float contentX = panelX;
+        float valueX = contentX + labelColW + FOLLOW_CARD_SPACING;
+
+        batch.end();
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        screenCam.setToOrtho(false, screenWidth, screenHeight);
+        screenCam.update();
+        shapeRenderer.setProjectionMatrix(screenCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(FOLLOW_PANEL_COLOR);
+        shapeRenderer.rect(panelX, panelY, panelW, panelH);
+        float badgeX = panelX + panelW - FOLLOW_CARD_PAD - badgeW;
+        float badgeY = panelY + panelH - FOLLOW_CARD_PAD - STATUS_PILL_HEIGHT;
+        shapeRenderer.setColor(FOLLOW_BADGE_COLOR);
+        shapeRenderer.rect(badgeX, badgeY, badgeW, STATUS_PILL_HEIGHT);
+        shapeRenderer.end();
+        batch.begin();
+
+        float lineY = panelY + panelH - FOLLOW_CARD_PAD - LINE_HEIGHT * 0.15f;
+        font.setColor(TITLE_COLOR);
+        font.draw(batch, title, contentX, lineY);
+
+        layout.setText(font, badge);
+        font.setColor(FOLLOW_BADGE_TEXT_COLOR);
+        font.draw(batch,
+                badge,
+                badgeX + STATUS_PILL_PAD_X,
+                badgeY + STATUS_PILL_HEIGHT - (STATUS_PILL_HEIGHT - layout.height) * 0.5f);
+
+        lineY -= LINE_HEIGHT;
+        font.setColor(DIM_COLOR);
+        font.draw(batch, subtitle, contentX, lineY);
+
+        font.setColor(TEXT_COLOR);
+        for (String[] detailRow : detailRows) {
+            lineY -= LINE_HEIGHT;
+            font.draw(batch, detailRow[0], contentX, lineY);
+            font.draw(batch, detailRow[1], valueX, lineY);
+        }
+
+        return panelY - LINE_HEIGHT * 0.75f;
     }
 
     // -------------------------------------------------------------------------
@@ -389,6 +488,80 @@ public class HUD {
 
     private String formatWarp(double warp) {
         return GravitasInputProcessor.formatWarpPreset(warp);
+    }
+
+    private String buildFollowTargetSubtitle(SimObject followTarget) {
+        if (followTarget instanceof CelestialBody body && body.bodyType != null) {
+            return humanizeEnumLabel(body.bodyType.name());
+        }
+        return "Tracked Object";
+    }
+
+    private String[] buildFollowTargetReferenceRow(SimObject followTarget) {
+        if (followTarget instanceof CelestialBody body) {
+            if (body.parent != null && body.parent.active) {
+                return new String[] {
+                        "Ref",
+                        body.parent.name + "  " + FormatUtils.formatDistance(body.distanceTo(body.parent))
+                };
+            }
+
+            double driftMeters = Math.sqrt(body.x * body.x + body.y * body.y + body.z * body.z);
+            return new String[] { "Drift", FormatUtils.formatDistance(driftMeters) };
+        }
+
+        CelestialBody nearest = physics.nearestBodyTo(followTarget.x, followTarget.y, followTarget.z);
+        if (nearest != null && nearest != followTarget) {
+            double alt = followTarget.distanceTo(nearest) - nearest.radius;
+            return new String[] {
+                    "Ref",
+                    nearest.name + "  " + formatAltitude(alt)
+            };
+        }
+
+        return null;
+    }
+
+    private String[] buildFollowTargetRelativeSpeedRow(SimObject followTarget) {
+        if (followTarget instanceof CelestialBody body) {
+            if (body.parent != null && body.parent.active) {
+                return new String[] { "Ref dV", formatRelativeSpeed(body, body.parent) };
+            }
+            return null;
+        }
+
+        CelestialBody nearest = physics.nearestBodyTo(followTarget.x, followTarget.y, followTarget.z);
+        if (nearest != null && nearest != followTarget) {
+            return new String[] { "Ref dV", formatRelativeSpeed(followTarget, nearest) };
+        }
+
+        return null;
+    }
+
+    private String formatRelativeSpeed(SimObject object, SimObject reference) {
+        double dvx = object.vx - reference.vx;
+        double dvy = object.vy - reference.vy;
+        double dvz = object.vz - reference.vz;
+        double relativeSpeedKms = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz) / 1000.0;
+        return String.format("%.2f km/s", relativeSpeedKms);
+    }
+
+    private String humanizeEnumLabel(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String[] parts = text.toLowerCase().split("_");
+        StringBuilder out = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return out.toString();
     }
 
     private String formatPosition(double wx, double wy, double wz) {

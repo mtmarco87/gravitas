@@ -36,9 +36,13 @@ public class BodyTooltip {
     private static final float HOVER_EXTRA_PX = 8f;
     private static final float PAD = 8f;
     private static final float LINE_H = 17f;
+    private static final float LOCK_RELATION_GAP = LINE_H * 0.45f;
     private static final Color BG_COLOR = new Color(0.08f, 0.08f, 0.10f, 0.85f);
+    private static final Color LOCKED_BG_COLOR = new Color(0.08f, 0.12f, 0.10f, 0.88f);
     private static final Color TEXT_COLOR = new Color(0.95f, 0.95f, 0.95f, 1f);
     private static final Color TITLE_COLOR = new Color(0.5f, 0.85f, 1.0f, 1f);
+    private static final Color LOCKED_TITLE_COLOR = new Color(0.72f, 0.98f, 0.80f, 1f);
+    private static final String LOCK_RELATION_MARKER = "__lock_relation_marker__";
 
     private final BitmapFont font;
     private final WorldCamera camera;
@@ -71,9 +75,10 @@ public class BodyTooltip {
         int mouseYFlipped = screenHeight - mouseY;
 
         SimObject hovered = findHovered(mouseX, mouseYFlipped, physics.getObjects());
+        boolean lockedTargetHovered = hovered != null && hovered == camera.getFollowTarget();
         String[] lines;
         if (hovered != null) {
-            lines = buildLines(hovered);
+            lines = buildLines(hovered, lockedTargetHovered);
         } else {
             Belt belt = findHoveredBelt(mouseX, mouseYFlipped);
             if (belt == null)
@@ -86,6 +91,11 @@ public class BodyTooltip {
         String[] labels = new String[lines.length];
         String[] values = new String[lines.length];
         for (int i = 0; i < lines.length; i++) {
+            if (LOCK_RELATION_MARKER.equals(lines[i])) {
+                labels[i] = LOCK_RELATION_MARKER;
+                values[i] = null;
+                continue;
+            }
             int tab = lines[i].indexOf('\t');
             if (tab >= 0) {
                 labels[i] = lines[i].substring(0, tab);
@@ -99,6 +109,9 @@ public class BodyTooltip {
         // Measure label column width (excluding title row).
         float labelColW = 0;
         for (int i = 1; i < labels.length; i++) {
+            if (LOCK_RELATION_MARKER.equals(labels[i])) {
+                continue;
+            }
             layout.setText(font, labels[i]);
             if (layout.width > labelColW)
                 labelColW = layout.width;
@@ -121,7 +134,10 @@ public class BodyTooltip {
         float titleW = layout.width;
 
         float boxW = Math.max(titleW, valueColX + valueColW) + PAD * 2;
-        float boxH = lines.length * LINE_H + PAD * 2;
+        float boxH = PAD * 2;
+        for (String line : lines) {
+            boxH += LOCK_RELATION_MARKER.equals(line) ? LOCK_RELATION_GAP : LINE_H;
+        }
 
         // Position tooltip: offset from cursor, clamped to screen.
         float tx = mouseX + 14;
@@ -135,7 +151,7 @@ public class BodyTooltip {
         batch.end();
         Gdx.gl.glEnable(com.badlogic.gdx.graphics.GL20.GL_BLEND);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.setColor(BG_COLOR);
+        shapeRenderer.setColor(lockedTargetHovered ? LOCKED_BG_COLOR : BG_COLOR);
         shapeRenderer.rect(tx, ty, boxW, boxH);
         shapeRenderer.end();
         batch.begin();
@@ -143,12 +159,16 @@ public class BodyTooltip {
         // Draw text rows.
         float lineY = ty + boxH - PAD - LINE_H * 0.1f;
         for (int i = 0; i < lines.length; i++) {
+            if (LOCK_RELATION_MARKER.equals(labels[i])) {
+                lineY -= LOCK_RELATION_GAP;
+                continue;
+            }
             if (values[i] == null) {
                 // Title or full-width row.
-                font.setColor(i == 0 ? TITLE_COLOR : TEXT_COLOR);
+                font.setColor(i == 0 ? (lockedTargetHovered ? LOCKED_TITLE_COLOR : TITLE_COLOR) : TEXT_COLOR);
                 font.draw(batch, labels[i], tx + PAD, lineY);
             } else {
-                font.setColor(TEXT_COLOR);
+                font.setColor(isLockRelationLabel(labels[i]) ? LOCKED_TITLE_COLOR : TEXT_COLOR);
                 font.draw(batch, labels[i], tx + PAD, lineY);
                 drawValue(batch, values[i], tx + PAD + labelColW + colGap, lineY);
             }
@@ -255,9 +275,9 @@ public class BodyTooltip {
         return false;
     }
 
-    private String[] buildLines(SimObject obj) {
+    private String[] buildLines(SimObject obj, boolean lockedTarget) {
         if (obj instanceof CelestialBody cb) {
-            String typeName = cb.bodyType == null ? "Body" : capitalize(cb.bodyType.name());
+            String typeName = cb.bodyType == null ? "Body" : humanizeEnumLabel(cb.bodyType.name());
             double speedKms = cb.speed() / 1000.0;
 
             // Collect direct moons (bodies whose parent == this body).
@@ -276,7 +296,7 @@ public class BodyTooltip {
                 star = star.parent;
 
             java.util.List<String> lines = new java.util.ArrayList<>();
-            lines.add(cb.name + "  [" + typeName + "]");
+            lines.add(formatTitle(cb.name, typeName, lockedTarget));
             lines.add("Mass\t" + formatSci(cb.mass) + " kg");
             lines.add("Radius\t" + String.format("%.0f km", cb.radius / 1000.0));
 
@@ -334,9 +354,55 @@ public class BodyTooltip {
                     sb.append(" +").append(moonNames.size() - 2).append(" more");
                 lines.add("Moons\t" + sb);
             }
+            appendLockedBodyRelationLines(lines, cb);
             return lines.toArray(new String[0]);
         }
-        return new String[] { obj.name, "Speed\t" + String.format("%.2f km/s", obj.speed() / 1000.0) };
+
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        lines.add(lockedTarget ? obj.name + "  [LOCK]" : obj.name);
+        lines.add("Speed\t" + String.format("%.2f km/s", obj.speed() / 1000.0));
+        appendLockedBodyRelationLines(lines, obj);
+        return lines.toArray(new String[0]);
+    }
+
+    private void appendLockedBodyRelationLines(java.util.List<String> lines, SimObject hoveredObject) {
+        SimObject lockedBody = camera.getFollowTarget();
+        if (lockedBody == null || !lockedBody.active || lockedBody == hoveredObject) {
+            return;
+        }
+
+        lines.add(LOCK_RELATION_MARKER);
+        lines.add("Lock dist\t" + FormatUtils.formatDistance(hoveredObject.distanceTo(lockedBody)));
+        lines.add("Lock dV\t" + formatRelativeSpeed(hoveredObject, lockedBody));
+    }
+
+    private boolean isLockRelationLabel(String label) {
+        return "Lock dist".equals(label) || "Lock dV".equals(label);
+    }
+
+    private String formatTitle(String bodyName, String typeName, boolean lockedTarget) {
+        if (lockedTarget) {
+            return bodyName + "  [" + typeName + "]  [LOCK]";
+        }
+        return bodyName + "  [" + typeName + "]";
+    }
+
+    private String humanizeEnumLabel(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        String[] parts = text.toLowerCase().split("_");
+        StringBuilder out = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return out.toString();
     }
 
     /**
@@ -365,6 +431,14 @@ public class BodyTooltip {
 
     private String formatDegrees(double radians) {
         return String.format("%.2f°", Math.toDegrees(radians));
+    }
+
+    private String formatRelativeSpeed(SimObject object, SimObject reference) {
+        double dvx = object.vx - reference.vx;
+        double dvy = object.vy - reference.vy;
+        double dvz = object.vz - reference.vz;
+        double relativeSpeedKms = Math.sqrt(dvx * dvx + dvy * dvy + dvz * dvz) / 1000.0;
+        return String.format("%.2f km/s", relativeSpeedKms);
     }
 
     /**
@@ -482,11 +556,5 @@ public class BodyTooltip {
                 "Outer edge\t" + String.format("%.2f AU", outerAU),
                 "Width\t" + String.format("%.2f AU", widthAU),
         };
-    }
-
-    private String capitalize(String s) {
-        if (s == null || s.isEmpty())
-            return s;
-        return s.charAt(0) + s.substring(1).toLowerCase().replace('_', ' ');
     }
 }

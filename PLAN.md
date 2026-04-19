@@ -84,13 +84,13 @@ SimObject (abstract base: id, position, velocity, mass)
 
 ### Phase 1 — Core Engine (2-3 settimane)
 
-- [ ] Project setup: Java 21, libGDX 1.12, Gradle multi-module
-- [ ] Physics engine: RK4 integrator, N-body loop
-- [ ] SimObject base + CelestialBody
-- [ ] Solar system loader (JSON → entity graph): Sole + 8 pianeti
-- [ ] Basic 2D renderer: cerchi colorati, zoom/pan (scroll + drag)
-- [ ] Time warp system con fixed physics step e interpolated render
-- [ ] Basic HUD: velocità, posizione, data simulata
+- [x] Project setup: Java 21, libGDX 1.12, Gradle multi-module
+- [x] Physics engine: RK4 integrator, N-body loop
+- [x] SimObject base + CelestialBody
+- [x] Solar system loader (JSON → entity graph): Sole + 8 pianeti
+- [x] Basic 2D renderer: cerchi colorati, zoom/pan (scroll + drag)
+- [x] Time warp system con fixed physics step e interpolated render
+- [x] Basic HUD: velocità, posizione, data simulata
 
 ### Phase 2 — Spacecraft & Orbital Mechanics (2-3 settimane)
 
@@ -99,18 +99,18 @@ SimObject (abstract base: id, position, velocity, mass)
 - [ ] ChemicalEngine con modello Tsiolkovsky (Δv = ve · ln(m₀/m₁))
 - [ ] Controllo manuale: WASD/frecce per thrust (prograde/retrograde/radiale/normale)
 - [ ] Spawn veicolo: click su orbita + velocity vector input
-- [ ] Orbit trail (buffer circolare)
-- [ ] Trajectory predictor (forward integration)
+- [x] Orbit trail (buffer circolare)
+- [x] Trajectory predictor (forward integration)
 - [ ] HUD parametri orbitali: apoapsis, periapsis, eccentricità, periodo, Δv residuo
 
 ### Phase 3 — Extended Solar System (1-2 settimane)
 
-- [ ] Tutte le lune principali nel JSON
-- [ ] Fascia asteroidi (visuale statistica)
-- [ ] Dwarf planets
+- [x] Tutte le lune principali nel JSON
+- [x] Fascia asteroidi (visuale statistica)
+- [x] Dwarf planets
 - [ ] Minimap sistema solare
-- [ ] Camera follow mode (segue oggetto selezionato)
-- [ ] Click su corpo per select + info panel
+- [x] Camera follow mode (segue oggetto selezionato)
+- [x] Click su corpo per select + info panel
 
 ### Phase 4 — Launch & Deorbit Simulation (3-4 settimane)
 
@@ -145,9 +145,9 @@ SimObject (abstract base: id, position, velocity, mass)
 
 ### Phase 7 — 3D Mode (fase futura separata)
 
-- [ ] Valutazione: libGDX 3D vs port separato
-- [ ] Rendering 3D con proiezione corretta
-- [ ] Rotazioni reali dei corpi celesti su asse
+- [x] Valutazione: libGDX 3D vs port separato
+- [x] Rendering 3D con proiezione corretta
+- [x] Rotazioni reali dei corpi celesti su asse
 
 ### Phase 8 — Extended Universe (fase futura)
 
