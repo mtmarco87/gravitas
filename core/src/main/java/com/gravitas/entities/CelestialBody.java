@@ -1,9 +1,13 @@
 package com.gravitas.entities;
 
+import com.gravitas.util.AngleUtils;
+
 /**
  * A natural celestial body: star, planet, moon, dwarf planet, or asteroid.
  */
 public class CelestialBody extends SimObject {
+
+    private static final double TWO_PI = Math.PI * 2.0;
 
     /** Body colour profile mirroring the nested JSON color object. */
     public static final class ColorProfile {
@@ -42,11 +46,62 @@ public class CelestialBody extends SimObject {
 
     /** Cloud layer profile mirroring the nested JSON clouds object. */
     public static final class CloudProfile {
-        /** Whether to render a procedural cloud layer over this body. */
-        public boolean enabled;
+        public enum ProceduralPreset {
+            NONE(0f),
+            LIGHT(1f),
+            MEDIUM(2f),
+            HEAVY(3f),
+            NATURAL(4f);
+
+            private final float shaderValue;
+
+            ProceduralPreset(float shaderValue) {
+                this.shaderValue = shaderValue;
+            }
+
+            public boolean isEnabled() {
+                return this != NONE;
+            }
+
+            public float shaderValue() {
+                return shaderValue;
+            }
+        }
+
+        /** True when a `clouds` object was present in JSON. */
+        public boolean configured;
+
+        /** Selected procedural cloud preset. */
+        public ProceduralPreset procedural = ProceduralPreset.NATURAL;
 
         /** Cloud colour (RGBA packed int). White = realistic Earth clouds. */
         public int color = 0xFFFFFFFF;
+
+        /** Optional equirectangular cloud-density map used as macro structure. */
+        public String texture;
+
+        public boolean hasTexture() {
+            return texture != null && !texture.isEmpty();
+        }
+
+        public boolean hasProcedural() {
+            return procedural.isEnabled();
+        }
+
+        public boolean isRenderable() {
+            return configured && (hasProcedural() || hasTexture());
+        }
+    }
+
+    /**
+     * Surface texture set for a body. All paths are relative to the system folder.
+     */
+    public static final class SurfaceTextureProfile {
+        /** Base albedo map used for standard rendering. */
+        public String base;
+
+        /** Optional night/emissive map blended on the unlit side. */
+        public String night;
     }
 
     /** Resolved spin-axis vector in world/ecliptic coordinates. */
@@ -80,14 +135,11 @@ public class CelestialBody extends SimObject {
     /** Nested cloud layer, mirroring the JSON clouds object. */
     public final CloudProfile clouds = new CloudProfile();
 
+    /** Surface texture set, mirroring the JSON texture string/object. */
+    public final SurfaceTextureProfile texture = new SurfaceTextureProfile();
+
     /** Resolved runtime spin axis. */
     public final SpinAxis spinAxis = new SpinAxis();
-
-    /**
-     * Texture filename relative to the stellar system textures folder (e.g.
-     * "earth.jpg"). Null = use flat colour.
-     */
-    public String textureFile;
 
     /** The body this object orbits (null for the star). */
     public CelestialBody parent;
@@ -122,6 +174,12 @@ public class CelestialBody extends SimObject {
 
     /** Current axial rotation angle (radians), updated each tick. */
     public double rotationAngle;
+
+    /**
+     * Continuous axial rotation phase for special consumers that need custom
+     * wrapping.
+     */
+    public double rotationAngleContinuous;
 
     public CelestialBody(String name, BodyType bodyType, double mass, double radius) {
         super(name, mass, radius);
@@ -165,7 +223,9 @@ public class CelestialBody extends SimObject {
     @Override
     public void update(double dt) {
         if (rotationPeriod != 0) {
-            rotationAngle += (2 * Math.PI / rotationPeriod) * dt;
+            double deltaRotation = (TWO_PI / rotationPeriod) * dt;
+            rotationAngleContinuous += deltaRotation;
+            rotationAngle = AngleUtils.wrapAngle(rotationAngleContinuous, TWO_PI);
         }
     }
 }

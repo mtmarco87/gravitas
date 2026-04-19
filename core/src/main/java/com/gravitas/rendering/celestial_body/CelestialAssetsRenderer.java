@@ -20,6 +20,15 @@ import java.util.Set;
  */
 final class CelestialAssetsRenderer {
 
+    static final class SurfaceTextures {
+        Texture base;
+        Texture night;
+
+        boolean hasNightTexture() {
+            return night != null;
+        }
+    }
+
     private static final String TAG = "CelestialAssetsRenderer";
     private static final String SHADER_2D = "celestial_body/2d";
     private static final String SHADER_3D = "celestial_body/3d";
@@ -46,7 +55,8 @@ final class CelestialAssetsRenderer {
     private Mesh glowMesh;
 
     private final Map<String, Mesh> ringMeshes = new HashMap<>();
-    private final Map<String, Texture> textures = new HashMap<>();
+    private final Map<String, SurfaceTextures> surfaceTextures = new HashMap<>();
+    private final Map<String, Texture> surfaceTextureCache = new HashMap<>();
     private final Map<String, Texture> ringTextures = new HashMap<>();
     private final Set<String> missingWarned = new HashSet<>();
 
@@ -100,6 +110,10 @@ final class CelestialAssetsRenderer {
         return cloud3dShader;
     }
 
+    Texture getCloudTexture(CelestialBody body) {
+        return loadSurfaceTexture(body.name + " cloud", trimToNull(body.clouds.texture));
+    }
+
     ShaderProgram dot3dShader() {
         return dot3dShader;
     }
@@ -124,19 +138,58 @@ final class CelestialAssetsRenderer {
         return glowMesh;
     }
 
-    Texture getTexture(CelestialBody body) {
-        if (body.textureFile == null || body.textureFile.isEmpty()) {
+    SurfaceTextures getSurfaceTextures(CelestialBody body) {
+        if (!hasSurfaceTexture(body)) {
             return null;
         }
-        Texture tex = textures.get(body.name);
+
+        SurfaceTextures textures = surfaceTextures.get(body.name);
+        if (textures != null) {
+            return textures.base != null ? textures : null;
+        }
+
+        textures = loadSurfaceTextures(body);
+        surfaceTextures.put(body.name, textures);
+        return textures.base != null ? textures : null;
+    }
+
+    private boolean hasSurfaceTexture(CelestialBody body) {
+        return hasText(body.texture.base) || hasText(body.texture.night);
+    }
+
+    private SurfaceTextures loadSurfaceTextures(CelestialBody body) {
+        SurfaceTextures textures = new SurfaceTextures();
+
+        String baseFile = trimToNull(body.texture.base);
+        String nightFile = trimToNull(body.texture.night);
+
+        if (nightFile == null && baseFile != null) {
+            nightFile = inferNightTextureFilename(baseFile);
+        }
+
+        textures.base = loadSurfaceTexture(body.name, baseFile);
+        textures.night = loadSurfaceTexture(body.name + " night", nightFile);
+
+        if (textures.base == null) {
+            textures.base = textures.night;
+        }
+        return textures;
+    }
+
+    private Texture loadSurfaceTexture(String warnKey, String fileName) {
+        if (!hasText(fileName)) {
+            return null;
+        }
+
+        String path = textureBasePath + fileName;
+        Texture tex = surfaceTextureCache.get(path);
         if (tex != null) {
             return tex;
         }
 
-        String path = textureBasePath + body.textureFile;
         if (!Gdx.files.internal(path).exists()) {
-            if (missingWarned.add(body.name)) {
-                Gdx.app.log(TAG, "Texture not found: " + path + " — falling back to colour for " + body.name);
+            if (missingWarned.add("surface:" + warnKey + ":" + path)) {
+                Gdx.app.log(TAG, "Texture not found: " + path + " — falling back to colour for " + warnKey);
             }
             return null;
         }
@@ -144,9 +197,39 @@ final class CelestialAssetsRenderer {
         tex = new Texture(Gdx.files.internal(path), true);
         tex.setFilter(Texture.TextureFilter.MipMapLinearLinear, Texture.TextureFilter.Linear);
         tex.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.ClampToEdge);
-        textures.put(body.name, tex);
+        surfaceTextureCache.put(path, tex);
         Gdx.app.log(TAG, "Loaded texture: " + path + " (" + tex.getWidth() + "×" + tex.getHeight() + ")");
         return tex;
+    }
+
+    private String inferNightTextureFilename(String baseFile) {
+        int dot = baseFile.lastIndexOf('.');
+        String stem = dot >= 0 ? baseFile.substring(0, dot) : baseFile;
+        if (stem.endsWith("-nightmap")) {
+            return null;
+        }
+
+        String ext = dot >= 0 ? baseFile.substring(dot) : "";
+        String rootStem = stem.endsWith("-daymap")
+                ? stem.substring(0, stem.length() - "-daymap".length())
+                : stem;
+        String variant = rootStem + "-nightmap" + ext;
+        if (variant.equals(baseFile)) {
+            return null;
+        }
+        return Gdx.files.internal(textureBasePath + variant).exists() ? variant : null;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isEmpty();
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     Texture getRingTexture(CelestialBody body) {
@@ -184,10 +267,11 @@ final class CelestialAssetsRenderer {
     }
 
     void dispose() {
-        for (Texture tex : textures.values()) {
+        for (Texture tex : surfaceTextureCache.values()) {
             tex.dispose();
         }
-        textures.clear();
+        surfaceTextureCache.clear();
+        surfaceTextures.clear();
 
         for (Texture tex : ringTextures.values()) {
             tex.dispose();

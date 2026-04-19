@@ -7,9 +7,13 @@ varying vec2 v_texCoord;
 varying vec4 v_color;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_nightTexture;
+uniform float u_hasNightTexture;
+uniform float u_enableCelestialFx;
 uniform float u_rotation;      // radians, current axial rotation
 uniform float u_isStar;        // 1.0 for stars (no limb darkening)
 uniform vec3  u_baseColor;     // fallback colour for near-black texture regions
+uniform vec3  u_lightDirWorld;
 uniform vec3  u_worldToBodyRow0;
 uniform vec3  u_worldToBodyRow1;
 uniform vec3  u_worldToBodyRow2;
@@ -53,12 +57,22 @@ void main() {
     float lodBias  = -smoothstep(0.05, 0.4, seamGrad) * 10.0;
 
     vec4 texColor = texture2D(u_texture, texUV, lodBias);
-
     // Partial-texture fill: when a texture region is near-black (unmapped),
     // blend in the body's base colour so it doesn't render as a dark void.
     float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
     float fill = 1.0 - smoothstep(0.01, 0.06, lum);
     texColor.rgb = mix(texColor.rgb, u_baseColor, fill);
+
+    if (u_enableCelestialFx > 0.5 && u_isStar < 0.5) {
+        float daylight = smoothstep(-0.10, 0.10, dot(worldNormal, normalize(u_lightDirWorld)));
+        vec3 litBase = texColor.rgb * mix(0.14, 1.0, daylight);
+        if (u_hasNightTexture > 0.5) {
+            vec3 nightColor = texture2D(u_nightTexture, texUV, lodBias).rgb;
+            texColor.rgb = mix(nightColor, litBase, daylight);
+        } else {
+            texColor.rgb = litBase;
+        }
+    }
 
     // Limb darkening: darken edges based on angle to viewer.
     // Stars skip this for a bright uniform look.

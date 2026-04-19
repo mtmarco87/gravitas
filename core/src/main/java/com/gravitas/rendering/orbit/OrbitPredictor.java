@@ -39,6 +39,7 @@ public class OrbitPredictor implements Disposable {
     // ---------------------------------------------------------------------
     private static final float DASH_PX = 8f;
     private static final float GAP_PX = 5f;
+    private static final float CPU_DASHED_MAX_WALK_PX = 4096f;
 
     // ---------------------------------------------------------------------
     // FREE_CAM occlusion-aware path tuning.
@@ -52,7 +53,7 @@ public class OrbitPredictor implements Disposable {
     private static final float FREE_CAM_CURVE_TOLERANCE_PX = 1.5f;
     private static final float FREE_CAM_CULL_MARGIN = 120f;
 
-    private static final OrbitRenderMode DEFAULT_ORBIT_RENDER_MODE = OrbitRenderMode.SOLID_OCCLUDED;
+    private static final OrbitRenderMode DEFAULT_ORBIT_RENDER_MODE = OrbitRenderMode.CPU_DASHED_SIMPLE;
 
     /**
      * EMA smoothing factor for orbital elements (0 = fully smoothed, 1 = raw).
@@ -72,7 +73,7 @@ public class OrbitPredictor implements Disposable {
     private final DashedLineRenderer dashedLineRenderer;
 
     /** Runtime-selectable orbit style shared by TOP_VIEW and FREE_CAM. */
-    private OrbitRenderMode orbitRenderMode = DEFAULT_ORBIT_RENDER_MODE;
+    private OrbitRenderMode orbitRenderMode;
 
     /** Set during render() to route line() calls to the correct renderer. */
     private boolean useGpuDash = false;
@@ -81,6 +82,7 @@ public class OrbitPredictor implements Disposable {
         this.shapeRenderer = shapeRenderer;
         this.camera = camera;
         this.dashedLineRenderer = new DashedLineRenderer();
+        this.orbitRenderMode = OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
     }
 
     @Override
@@ -101,14 +103,19 @@ public class OrbitPredictor implements Disposable {
     }
 
     public void setOrbitRenderMode(OrbitRenderMode orbitRenderMode) {
-        if (orbitRenderMode != null) {
-            this.orbitRenderMode = orbitRenderMode;
+        OrbitRenderMode resolved = OrbitRenderMode.resolveEnabled(orbitRenderMode);
+        if (resolved != null) {
+            this.orbitRenderMode = resolved;
         }
     }
 
     public void cycleOrbitRenderMode() {
-        OrbitRenderMode[] modes = OrbitRenderMode.values();
-        orbitRenderMode = modes[(orbitRenderMode.ordinal() + 1) % modes.length];
+        OrbitRenderMode next = orbitRenderMode != null
+                ? orbitRenderMode.nextEnabled()
+                : OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
+        if (next != null) {
+            orbitRenderMode = next;
+        }
     }
 
     /**
@@ -438,12 +445,16 @@ public class OrbitPredictor implements Disposable {
         final float viewportH = camera.getCamera().viewportHeight;
         // Generous margin so dash boundaries don't pop at the viewport edge.
         final float cullMargin = 60f;
+        final float clipMinX = -cullMargin;
+        final float clipMaxX = viewportW + cullMargin;
+        final float clipMinY = -cullMargin;
+        final float clipMaxY = viewportH + cullMargin;
 
         double prevWx = 0;
         double prevWy = 0;
         double prevWz = 0;
-        float distAcc = 0f;
-        boolean drawing = true;
+        DashState dashState = new DashState();
+        float[] clipRange = new float[2];
 
         for (int i = 0; i <= ELLIPSE_SEGMENTS; i++) {
             double wx = pts[i * 3];
@@ -461,8 +472,8 @@ public class OrbitPredictor implements Disposable {
                 double depth0 = camera.depthOf(prevWx, prevWy, prevWz);
                 double depth1 = camera.depthOf(wx, wy, wz);
                 if (depth0 <= FRONT_CLIP_EPSILON || depth1 <= FRONT_CLIP_EPSILON) {
-                    distAcc = 0f;
-                    drawing = true;
+                    dashState.distAcc = 0f;
+                    dashState.drawing = true;
                     prevWx = wx;
                     prevWy = wy;
                     prevWz = wz;
@@ -493,66 +504,169 @@ public class OrbitPredictor implements Disposable {
                             Math.max(segStart.y, segEnd.y) >= -cullMargin);
 
             if (!segMayBeVisible) {
-                // Off-screen fast-path: advance the dash/gap state in O(1)
-                // using the total segment length and modulo arithmetic.
-                float firstLen = (drawing ? DASH_PX : GAP_PX) - distAcc;
-                if (segLen < firstLen) {
-                    distAcc += segLen;
-                } else {
-                    float phase = segLen - firstLen;
-                    drawing = !drawing;
-                    float cycles = (float) Math.floor(phase / period);
-                    phase -= cycles * period;
-                    if (phase <= (drawing ? DASH_PX : GAP_PX)) {
-                        distAcc = phase;
-                    } else {
-                        distAcc = phase - (drawing ? DASH_PX : GAP_PX);
-                        drawing = !drawing;
-                    }
-                }
+                advanceDashState(dashState, segLen, period);
                 prevWx = wx;
                 prevWy = wy;
                 prevWz = wz;
                 continue;
             }
 
-            // Normal path: walk the segment, emitting lines for dash portions.
-            float walked = 0f;
-            while (walked < segLen) {
-                float threshold = drawing ? DASH_PX : GAP_PX;
-                float remaining = threshold - distAcc;
+            boolean useClippedWalk = allowViewportFastPath || segLen > CPU_DASHED_MAX_WALK_PX;
+            float walkStartT = 0f;
+            float walkEndT = 1f;
+            if (useClippedWalk && clipSegmentToRect(segStart.x, segStart.y, segEnd.x, segEnd.y,
+                    clipMinX, clipMaxX, clipMinY, clipMaxY, clipRange)) {
+                walkStartT = clipRange[0];
+                walkEndT = clipRange[1];
+            }
 
-                if (walked + remaining >= segLen) {
-                    if (drawing) {
-                        float t0 = walked / segLen;
+            if (walkEndT <= walkStartT) {
+                advanceDashState(dashState, segLen, period);
+                prevWx = wx;
+                prevWy = wy;
+                prevWz = wz;
+                continue;
+            }
+
+            float prefixLen = segLen * walkStartT;
+            float visibleLen = segLen * (walkEndT - walkStartT);
+            if (visibleLen > CPU_DASHED_MAX_WALK_PX) {
+                walkEndT = walkStartT + CPU_DASHED_MAX_WALK_PX / segLen;
+                visibleLen = CPU_DASHED_MAX_WALK_PX;
+            }
+
+            if (prefixLen > 0f) {
+                advanceDashState(dashState, prefixLen, period);
+            }
+
+            // Normal path: walk only the visible/clipped portion, then fast-forward the
+            // rest.
+            float clippedStartX = segStart.x + walkStartT * dx;
+            float clippedStartY = segStart.y + walkStartT * dy;
+            float clippedDx = dx * (walkEndT - walkStartT);
+            float clippedDy = dy * (walkEndT - walkStartT);
+            float walked = 0f;
+            while (walked < visibleLen) {
+                float threshold = dashState.drawing ? DASH_PX : GAP_PX;
+                float remaining = threshold - dashState.distAcc;
+
+                if (walked + remaining >= visibleLen) {
+                    if (dashState.drawing) {
+                        float t0 = walked / visibleLen;
                         shapeRenderer.line(
-                                segStart.x + t0 * dx,
-                                segStart.y + t0 * dy,
-                                segEnd.x,
-                                segEnd.y);
+                                clippedStartX + t0 * clippedDx,
+                                clippedStartY + t0 * clippedDy,
+                                clippedStartX + clippedDx,
+                                clippedStartY + clippedDy);
                     }
-                    distAcc += segLen - walked;
-                    walked = segLen;
+                    dashState.distAcc += visibleLen - walked;
+                    walked = visibleLen;
                 } else {
-                    float tFlip = (walked + remaining) / segLen;
-                    if (drawing) {
-                        float t0 = walked / segLen;
+                    float tFlip = (walked + remaining) / visibleLen;
+                    if (dashState.drawing) {
+                        float t0 = walked / visibleLen;
                         shapeRenderer.line(
-                                segStart.x + t0 * dx,
-                                segStart.y + t0 * dy,
-                                segStart.x + tFlip * dx,
-                                segStart.y + tFlip * dy);
+                                clippedStartX + t0 * clippedDx,
+                                clippedStartY + t0 * clippedDy,
+                                clippedStartX + tFlip * clippedDx,
+                                clippedStartY + tFlip * clippedDy);
                     }
                     walked += remaining;
-                    distAcc = 0f;
-                    drawing = !drawing;
+                    dashState.distAcc = 0f;
+                    dashState.drawing = !dashState.drawing;
                 }
+            }
+
+            float suffixLen = segLen * (1f - walkEndT);
+            if (suffixLen > 0f) {
+                advanceDashState(dashState, suffixLen, period);
             }
 
             prevWx = wx;
             prevWy = wy;
             prevWz = wz;
         }
+    }
+
+    private static boolean clipSegmentToRect(float x0, float y0, float x1, float y1,
+            float minX, float maxX, float minY, float maxY,
+            float[] outRange) {
+        float dx = x1 - x0;
+        float dy = y1 - y0;
+        float t0 = 0f;
+        float t1 = 1f;
+
+        if (!clipTest(-dx, x0 - minX, outRange, t0, t1))
+            return false;
+        t0 = outRange[0];
+        t1 = outRange[1];
+        if (!clipTest(dx, maxX - x0, outRange, t0, t1))
+            return false;
+        t0 = outRange[0];
+        t1 = outRange[1];
+        if (!clipTest(-dy, y0 - minY, outRange, t0, t1))
+            return false;
+        t0 = outRange[0];
+        t1 = outRange[1];
+        if (!clipTest(dy, maxY - y0, outRange, t0, t1))
+            return false;
+
+        return true;
+    }
+
+    private static boolean clipTest(float p, float q, float[] outRange, float t0, float t1) {
+        if (p == 0f) {
+            if (q < 0f)
+                return false;
+            outRange[0] = t0;
+            outRange[1] = t1;
+            return true;
+        }
+
+        float r = q / p;
+        if (p < 0f) {
+            if (r > t1)
+                return false;
+            if (r > t0)
+                t0 = r;
+        } else {
+            if (r < t0)
+                return false;
+            if (r < t1)
+                t1 = r;
+        }
+
+        outRange[0] = t0;
+        outRange[1] = t1;
+        return true;
+    }
+
+    private static void advanceDashState(DashState dashState, float distance, float period) {
+        if (distance <= 0f) {
+            return;
+        }
+
+        float firstLen = (dashState.drawing ? DASH_PX : GAP_PX) - dashState.distAcc;
+        if (distance < firstLen) {
+            dashState.distAcc += distance;
+            return;
+        }
+
+        float phase = distance - firstLen;
+        dashState.drawing = !dashState.drawing;
+        phase -= (float) Math.floor(phase / period) * period;
+        float threshold = dashState.drawing ? DASH_PX : GAP_PX;
+        if (phase <= threshold) {
+            dashState.distAcc = phase;
+        } else {
+            dashState.distAcc = phase - threshold;
+            dashState.drawing = !dashState.drawing;
+        }
+    }
+
+    private static final class DashState {
+        float distAcc = 0f;
+        boolean drawing = true;
     }
 
     private void drawOrbitEllipseFreeCam(double cx, double cy, double cz,

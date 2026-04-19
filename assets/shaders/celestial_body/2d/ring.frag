@@ -16,6 +16,8 @@ uniform vec2  u_invAxisX;
 uniform vec2  u_invAxisY;
 uniform float u_bodyRadius;
 uniform vec2  u_localViewZ;
+uniform float u_enableRingShadow;
+uniform vec3  u_lightDirLocal;
 
 void main() {
     vec2 delta = v_screenPos - u_center;
@@ -47,6 +49,18 @@ void main() {
     float edgeWidth = 0.02;
     float edgeInner = smoothstep(u_innerRadius, u_innerRadius + edgeWidth, r);
     float edgeOuter = smoothstep(u_outerRadius, u_outerRadius - edgeWidth, r);
+
+    if (u_enableRingShadow > 0.5) {
+        vec3 lightDir = normalize(u_lightDirLocal);
+        vec3 localPos = vec3(local.x, 0.0, local.y);
+        float planeLight = mix(0.80, 1.0, pow(clamp(abs(lightDir.y), 0.0, 1.0), 0.65));
+        float along = dot(localPos, lightDir);
+        float behind = 1.0 - smoothstep(-0.01, 0.04, along);
+        float shadowEdge = 0.018;
+        float perpDist = length(localPos - lightDir * along);
+        float bodyShadow = behind * (1.0 - smoothstep(u_bodyRadius - shadowEdge, u_bodyRadius + shadowEdge, perpDist));
+        ringCol.rgb *= planeLight * mix(1.0, 0.12, bodyShadow);
+    }
 
     gl_FragColor = vec4(ringCol.rgb, ringCol.a * u_opacity * edgeInner * edgeOuter);
 }

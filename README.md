@@ -1,6 +1,6 @@
 # Gravitas - Orbital Simulation Sandbox 🌍🪐
 
-A real-time stellar-system simulator featuring N-body physics, textured celestial rendering, dual camera modes, time warp, and interactive orbital visualization.
+A real-time stellar-system simulator featuring N-body physics, textured celestial rendering, dual camera modes, time warp, interactive orbital visualization, and configurable visual FX.
 
 ## Table of Contents
 
@@ -31,18 +31,18 @@ A real-time stellar-system simulator featuring N-body physics, textured celestia
 
 Gravitas is a desktop orbital simulation sandbox built with Java 21 and libGDX. It loads stellar systems from a universe manifest, converts Keplerian orbital elements to 3D state vectors at J2000, and advances them with a full N-body RK4 integrator — all rendered in real time with textured celestial bodies, orbit trails, Keplerian orbit predictors, spin-axis overlays, and an intelligent visual-scale system.
 
-The bundled Solar System contains 20+ simulated bodies (Sun, 8 planets, 4 dwarf planets, 11 moons) and 2 statistical belts (asteroid belt and Kuiper belt). The project is designed for interactively exploring orbital mechanics: follow planets, measure distances, inspect spin axes, observe real proportions, and play with time warp from 1× to 1 billion×.
+The bundled Solar System contains 20+ simulated bodies (Sun, 8 planets, 4 dwarf planets, 11 moons) and 2 statistical belts (asteroid belt and Kuiper belt). The project is designed for interactively exploring orbital mechanics: follow planets, measure distances, inspect spin axes, observe real proportions, tune celestial rendering effects, and play with time warp from 1× to 1 billion×.
 
 ## Features
 
 - **N-body simulation** — RK4 integrator over full 3D state vectors with adaptive timestep
 - **Multiple celestial bodies + statistical belts** — Sun, planets, dwarf planets, major moons, asteroid belt, and Kuiper belt
-- **Textured rendering** — dedicated shaders for planets, star glow, atmospheres, clouds, and rings
+- **Textured rendering** — dedicated shaders for planets, star glow, atmospheres, clouds, rings, night-side blending, and projected ring shadows
 - **Dual camera modes** — orthographic top view and perspective free-cam with orbital follow frames
 - **Overlay system** — orbit trails, Keplerian orbit predictors (multiple render styles), and body spin-axis indicators
 - **Time warp** from 1× to 1,000,000,000× across 10 presets
 - **Visual scale** — logarithmic/power-law sizing with overlap detection to keep all bodies visible
-- **Interactive tools** — hover tooltip, click-to-click measurement, scale bar, and full HUD
+- **Interactive tools** — hover tooltip, click-to-click measurement, scale bar, full HUD, and an in-app celestial FX menu
 - **Ambient soundtrack** — Stellardrone "Between The Rings" (CC BY 4.0)
 - **Data-driven architecture** — universe manifest + per-system JSON with validated orbital and spin-axis data
 
@@ -87,28 +87,32 @@ The application starts by loading the universe manifest (`assets/data/universe.j
 
 ### Controls
 
-| Key / Action           | Function                                                                              |
-| ---------------------- | ------------------------------------------------------------------------------------- |
-| `SPACE`                | Pause / resume simulation                                                             |
-| `1`–`0` `,` `.`        | Time warp presets (1× → 1B×)                                                          |
-| `Scroll`               | Zoom (top view) / dolly (free-cam)                                                    |
-| `Left drag` / `Arrows` | Pan (top view) / orbit (free-cam)                                                     |
-| `Right drag`           | Orbit camera around focus (free-cam)                                                  |
-| `Click`                | Follow body                                                                           |
-| `Dbl-click`            | Zoom & follow body                                                                    |
-| `F`                    | Clear follow target                                                                   |
-| `P`                    | Cycle follow mode (free / orbit upright / orbit plane / orbit axial / rotation axial) |
-| `V`                    | Toggle visual scale                                                                   |
-| `T`                    | Cycle overlays (trails / trails+orbits / trails+orbits+spin / none)                   |
-| `Y`                    | Cycle orbit predictor style (solid / CPU dashed / GPU dashed)                         |
-| `C`                    | Toggle camera mode (top view / free-cam)                                              |
-| `L`                    | Toggle orbital dimensionality (2D flat / 3D inclined)                                 |
-| `Z`                    | Cycle free-cam FOV (5° / 60° / auto-adaptive)                                         |
-| `R`                    | Reset camera to nearest system star                                                   |
-| `X`                    | Toggle celestial FX                                                                   |
-| `M`                    | Toggle measurement tool                                                               |
-| `H`                    | Show/hide controls legend                                                             |
-| `Q`                    | Quit                                                                                  |
+| Key / Action           | Function                                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------- |
+| `SPACE`                | Pause / resume simulation                                                               |
+| `1`–`0` `,` `.`        | Time warp presets (1× → 1B×)                                                            |
+| `Scroll`               | Zoom (top view) / dolly (free-cam)                                                      |
+| `Left drag` / `Arrows` | Pan (top view) / orbit (free-cam)                                                       |
+| `Right drag`           | Orbit camera around focus (free-cam)                                                    |
+| `Click`                | Follow body                                                                             |
+| `Dbl-click`            | Zoom & follow body                                                                      |
+| `F`                    | Clear follow target                                                                     |
+| `P`                    | Cycle follow mode (free / orbit upright / orbit plane / orbit axial / rotation axial)   |
+| `V`                    | Toggle visual scale                                                                     |
+| `T`                    | Cycle overlays (trails / trails+orbits / trails+orbits+spin / none)                     |
+| `Y`                    | Cycle orbit predictor style (dashed / solid)                                            |
+| `C`                    | Toggle camera mode (top view / free-cam)                                                |
+| `L`                    | Toggle orbital dimensionality (2D flat / 3D inclined)                                   |
+| `Z`                    | Cycle free-cam FOV (5° / 60° / auto-adaptive)                                           |
+| `R`                    | Reset camera to nearest system star                                                     |
+| `X`                    | Open celestial FX menu (`Clouds`, `Surface day/night`, `Ring shadows`)                  |
+| `M`                    | Toggle measurement tool (`Ctrl+click` world-lock, `Shift+click` body snap, `Esc` close) |
+| `H`                    | Show/hide controls legend                                                               |
+| `Q`                    | Quit                                                                                    |
+
+While the FX menu is open, use `Up`/`Down` to select an entry, `Enter` or `Space` to toggle it, `1`–`3` for quick toggles, and `Esc` or `X` to close it.
+
+While the measurement tool is active, plain click places screen-locked anchors that stay visually stable relative to the current view, `Ctrl+click` places an absolute world-space anchor, `Shift+click` snaps to the nearest visible celestial body when one is within the snap tolerance, and `Esc` or `M` closes the tool.
 
 ## Architecture
 
@@ -162,6 +166,8 @@ Per frame, Gravitas renders in this order:
 5. **Celestial bodies** — textured rendering via `CelestialBodyRenderer`:
    - _Top view:_ textured disks + shader-based atmosphere/clouds/ring/starglow overlays
    - _Free-cam:_ 3D sphere meshes + billboard overlays, logarithmic-depth helpers, ring meshes
+   - _Surface FX:_ optional night-side shading using `texture.base` plus `texture.night`
+   - _Ring FX:_ optional projected planetary shadow on rings, with lighting tuned for thin ring planes
 6. **Spin-axis overlays** — body rotation axis indicators with occlusion-aware clipping
 7. **Orbit trails** — polylines with progressive alpha fade
 8. **Orbit predictors (late)** — solid and GPU-dashed styles with occlusion masking and glow post-process
@@ -187,11 +193,88 @@ Each entry in a system file's `bodies` array defines a simulated body using Kepl
 
 Optional visual/physical sections:
 
-- `texture` — surface texture filename (resolved from the system's texture folder)
+- `texture` — nested object describing surface textures, resolved from the system's texture folder
 - `color` — nested object: `base`, `glow`, `core`, `edge` (hex)
 - `ring` — `innerRadius`, `outerRadius`, `texture`, `color`, `opacity`
-- `clouds` — `enabled`, `color`
+- `clouds` — optional object controlling cloud rendering; see the dedicated section below
+- `spinAxis` — dedicated orientation object for the body's pole; see the dedicated section below
 - `atmosphereScaleHeight`, `atmosphereDensitySeaLevel`
+
+### Surface Texture Schema
+
+Surface textures now use a uniform object form:
+
+```json
+"texture": {
+   "base": "mars.jpg"
+}
+```
+
+Bodies with explicit night-side emissive/detail maps add `night`:
+
+```json
+"texture": {
+   "base": "earth-daymap.jpg",
+   "night": "earth-nightmap.jpg"
+}
+```
+
+Notes:
+
+- `base` is always the primary albedo map.
+- `night` is optional and is blended on the unlit hemisphere when surface FX are enabled.
+- If `night` is omitted, Gravitas still shades the dark side procedurally from the base texture.
+- The loader still accepts a legacy string texture internally for backward compatibility, but the recommended authoring format is always the object form shown above.
+
+### Clouds
+
+Cloud rendering uses an optional `clouds` object. Omit it entirely for bodies with no clouds.
+
+Procedural clouds:
+
+```json
+"clouds": {
+   "color": "FFFFFF",
+   "procedural": "natural"
+}
+```
+
+Medium procedural clouds:
+
+```json
+"clouds": {
+   "color": "FFFFFF",
+   "procedural": "medium"
+}
+```
+
+Texture-only clouds:
+
+```json
+"clouds": {
+   "color": "FFFFFF",
+   "procedural": "none",
+   "texture": "earth-clouds.jpg"
+}
+```
+
+Hybrid clouds with real macro structure plus procedural evolution:
+
+```json
+"clouds": {
+   "color": "FFFFFF",
+   "procedural": "light",
+   "texture": "earth-clouds.jpg"
+}
+```
+
+Notes:
+
+- `color` tints the final cloud layer and is still useful even when `texture` is present.
+- `procedural` accepts presets: `"natural"`, `"light"`, `"medium"`, `"heavy"`, and `"none"` to disable the procedural pass explicitly.
+- If `procedural` is omitted and the `clouds` object only provides cloud colour, Gravitas defaults to the `"natural"` procedural preset.
+- If `procedural` is omitted and a `texture` is present, Gravitas defaults to texture-only clouds.
+- If you provide both `texture` and a non-`none` procedural preset, Gravitas renders the combo: real macro coverage from the texture plus procedural evolution on top.
 
 ### Spin Axis
 
@@ -258,7 +341,9 @@ Add a new entry to the target system's `bodies` array — e.g. `assets/data/syst
   "parent": "Sun",
   "mass": 1.0e24,
   "radius": 5000000,
-  "texture": "newbody.jpg",
+  "texture": {
+    "base": "newbody.jpg"
+  },
   "color": {
     "base": "C08040",
     "glow": "D49A68"
@@ -281,6 +366,17 @@ Add a new entry to the target system's `bodies` array — e.g. `assets/data/syst
 Supported types: `STAR`, `PLANET`, `MOON`, `DWARF_PLANET`, `ASTEROID`.
 
 If textured, place the image under `assets/textures/<system-id>/`. For a statistical belt, use `"type": "ASTEROID"` with `"statistical": true` and the belt radius/particle-count fields. To add an entirely new system, create a matching entry in `assets/data/universe.json`.
+
+To enable explicit day/night rendering for a body, provide:
+
+```json
+"texture": {
+   "base": "newbody-day.jpg",
+   "night": "newbody-night.jpg"
+}
+```
+
+If the body has clouds, keep using the separate `clouds` object; cloud rendering is controlled at runtime through the `X` FX menu, independently from surface day/night and ring-shadow rendering.
 
 ### Time Warp and Accuracy
 

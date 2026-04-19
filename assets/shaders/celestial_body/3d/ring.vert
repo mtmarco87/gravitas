@@ -8,9 +8,11 @@ uniform mat4 u_mvp;
 uniform float u_logDepthC;
 
 varying vec2 v_texCoord;
+varying vec3 v_localPos;
 
 void main() {
     v_texCoord = a_texCoord0;
+    v_localPos = a_position;
     gl_Position = u_mvp * vec4(a_position, 1.0);
     if (u_logDepthC > 0.0) {
         gl_Position.z = (log2(max(1e-6, gl_Position.w + 1.0)) * u_logDepthC - 1.0) * gl_Position.w;

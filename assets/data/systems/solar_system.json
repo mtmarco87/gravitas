@@ -32,7 +32,9 @@
         "core": "FFF7D9",
         "edge": "FFA633"
       },
-      "texture": "sun.jpg",
+      "texture": {
+        "base": "sun.jpg"
+      },
       "rotationPeriod": 2192832,
       "spinAxis": {
         "type": "absolute",
@@ -57,7 +59,9 @@
       "color": {
         "base": "B5B5B5"
       },
-      "texture": "mercury.jpg",
+      "texture": {
+        "base": "mercury.jpg"
+      },
       "rotationPeriod": 5067360,
       "spinAxis": {
         "type": "absolute",
@@ -83,7 +87,9 @@
         "base": "E8C56B",
         "glow": "E8D080"
       },
-      "texture": "venus.jpg",
+      "texture": {
+        "base": "venus.jpg"
+      },
       "rotationPeriod": -20996798,
       "spinAxis": {
         "type": "absolute",
@@ -109,7 +115,10 @@
         "base": "2E86AB",
         "glow": "6CB4EE"
       },
-      "texture": "earth.jpg",
+      "texture": {
+        "base": "earth-daymap.jpg",
+        "night": "earth-nightmap.jpg"
+      },
       "rotationPeriod": 86164,
       "spinAxis": {
         "type": "absolute",
@@ -125,8 +134,9 @@
       "meanAnomalyAtEpoch": 6.24002,
       "argumentOfPeriapsis": 1.79659,
       "clouds": {
-        "enabled": true,
-        "color": "FFFFFF"
+        "color": "FFFFFF",
+        "texture": "earth-clouds.jpg",
+        "procedural": "natural"
       }
     },
     {
@@ -138,7 +148,9 @@
       "color": {
         "base": "C0C0C0"
       },
-      "texture": "earth-moon.jpg",
+      "texture": {
+        "base": "earth-moon.jpg"
+      },
       "rotationPeriod": 2360592,
       "spinAxis": {
         "type": "absolute",
@@ -164,7 +176,9 @@
         "base": "C1440E",
         "glow": "D4886B"
       },
-      "texture": "mars.jpg",
+      "texture": {
+        "base": "mars.jpg"
+      },
       "rotationPeriod": 88642,
       "spinAxis": {
         "type": "absolute",
@@ -189,7 +203,9 @@
       "color": {
         "base": "A08060"
       },
-      "texture": "mars-phobos.jpg",
+      "texture": {
+        "base": "mars-phobos.jpg"
+      },
       "rotationPeriod": 27553,
       "spinAxis": {
         "type": "absolute",
@@ -214,7 +230,9 @@
       "color": {
         "base": "A08060"
       },
-      "texture": "mars-deimos.jpg",
+      "texture": {
+        "base": "mars-deimos.jpg"
+      },
       "rotationPeriod": 109044,
       "spinAxis": {
         "type": "absolute",
@@ -240,7 +258,9 @@
         "base": "C88B3A",
         "glow": "D4A055"
       },
-      "texture": "jupiter.jpg",
+      "texture": {
+        "base": "jupiter.jpg"
+      },
       "rotationPeriod": 35730,
       "spinAxis": {
         "type": "absolute",
@@ -271,7 +291,9 @@
       "color": {
         "base": "E8D44D"
       },
-      "texture": "jupiter-io-a.jpg",
+      "texture": {
+        "base": "jupiter-io-a.jpg"
+      },
       "rotationPeriod": 152853,
       "spinAxis": {
         "type": "absolute",
@@ -296,7 +318,9 @@
       "color": {
         "base": "C4A882"
       },
-      "texture": "jupiter-europa.jpg",
+      "texture": {
+        "base": "jupiter-europa.jpg"
+      },
       "rotationPeriod": 306822,
       "spinAxis": {
         "type": "absolute",
@@ -321,7 +345,9 @@
       "color": {
         "base": "9E8F7D"
       },
-      "texture": "jupiter-ganymede.jpg",
+      "texture": {
+        "base": "jupiter-ganymede.jpg"
+      },
       "rotationPeriod": 618153,
       "spinAxis": {
         "type": "absolute",
@@ -346,7 +372,9 @@
       "color": {
         "base": "7A6E64"
       },
-      "texture": "jupiter-callisto.jpg",
+      "texture": {
+        "base": "jupiter-callisto.jpg"
+      },
       "rotationPeriod": 1441931,
       "spinAxis": {
         "type": "absolute",
@@ -372,7 +400,9 @@
         "base": "EAD5A0",
         "glow": "E8D5A0"
       },
-      "texture": "saturn.jpg",
+      "texture": {
+        "base": "saturn.jpg"
+      },
       "rotationPeriod": 38362,
       "spinAxis": {
         "type": "absolute",
@@ -404,7 +434,9 @@
         "base": "E8A020",
         "glow": "E8B040"
       },
-      "texture": "saturn-titan.jpg",
+      "texture": {
+        "base": "saturn-titan.jpg"
+      },
       "rotationPeriod": 1377648,
       "spinAxis": {
         "type": "absolute",
@@ -429,7 +461,9 @@
       "color": {
         "base": "F0F0F0"
       },
-      "texture": "saturn-enceladus.jpg",
+      "texture": {
+        "base": "saturn-enceladus.jpg"
+      },
       "rotationPeriod": 118386,
       "spinAxis": {
         "type": "absolute",
@@ -455,7 +489,9 @@
         "base": "7DE8E8",
         "glow": "7DE8E8"
       },
-      "texture": "uranus.jpg",
+      "texture": {
+        "base": "uranus.jpg"
+      },
       "rotationPeriod": -62064,
       "spinAxis": {
         "type": "absolute",
@@ -487,7 +523,9 @@
         "base": "5B7BE0",
         "glow": "5070D0"
       },
-      "texture": "neptune.jpg",
+      "texture": {
+        "base": "neptune.jpg"
+      },
       "rotationPeriod": 57996,
       "spinAxis": {
         "type": "absolute",
@@ -518,7 +556,9 @@
       "color": {
         "base": "D4C8B0"
       },
-      "texture": "neptune-triton.jpg",
+      "texture": {
+        "base": "neptune-triton.jpg"
+      },
       "rotationPeriod": -507773,
       "spinAxis": {
         "type": "absolute",
@@ -544,7 +584,9 @@
         "base": "C2A882",
         "glow": "C0B090"
       },
-      "texture": "pluto.jpg",
+      "texture": {
+        "base": "pluto.jpg"
+      },
       "rotationPeriod": -551856,
       "spinAxis": {
         "type": "absolute",
@@ -569,7 +611,9 @@
       "color": {
         "base": "A0A0A0"
       },
-      "texture": "pluto-charon.jpg",
+      "texture": {
+        "base": "pluto-charon.jpg"
+      },
       "rotationPeriod": 551856,
       "spinAxis": {
         "type": "absolute",
@@ -594,7 +638,9 @@
       "color": {
         "base": "909090"
       },
-      "texture": "ceres.jpg",
+      "texture": {
+        "base": "ceres.jpg"
+      },
       "rotationPeriod": 32668,
       "spinAxis": {
         "type": "absolute",
@@ -620,7 +666,9 @@
       "color": {
         "base": "D4906A"
       },
-      "texture": "makemake.jpg",
+      "texture": {
+        "base": "makemake.jpg"
+      },
       "rotationPeriod": 82176,
       "spinAxis": {
         "type": "orbital-relative",
@@ -646,7 +694,9 @@
       "color": {
         "base": "D0D0D0"
       },
-      "texture": "eris.jpg",
+      "texture": {
+        "base": "eris.jpg"
+      },
       "rotationPeriod": 93240,
       "spinAxis": {
         "type": "absolute",

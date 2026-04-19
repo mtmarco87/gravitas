@@ -7,6 +7,7 @@ import com.gravitas.entities.Belt;
 import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 import com.gravitas.rendering.celestial_body.CelestialBodyRenderer;
+import com.gravitas.rendering.celestial_body.CelestialFxSettings;
 import com.gravitas.rendering.orbit.OrbitOcclusionMask;
 import com.gravitas.rendering.orbit.OrbitPredictor;
 import com.gravitas.rendering.orbit.OrbitTrail;
@@ -200,9 +201,9 @@ public class SimRenderer {
         vsInhibited = false;
     }
 
-    public void setCelestialFx(boolean enabled) {
+    public void setCelestialFxSettings(CelestialFxSettings settings) {
         if (celestialBodyRenderer != null) {
-            celestialBodyRenderer.setCelestialFx(enabled);
+            celestialBodyRenderer.setCelestialFxSettings(settings);
         }
     }
 
@@ -253,7 +254,7 @@ public class SimRenderer {
         float[] sr = new float[n];
         computeScreenLayout(objects, sx, sy, sr);
 
-        renderBodies(objects, sx, sy, sr);
+        renderBodies(objects, sx, sy, sr, simDt);
 
         OrbitOcclusionMask occlusionMask = new OrbitOcclusionMask(camera, objects, sr);
         if (spinAxisOverlayEnabled) {
@@ -549,10 +550,10 @@ public class SimRenderer {
     // Body rendering
     // -------------------------------------------------------------------------
 
-    private void renderBodies(List<SimObject> objects, float[] sx, float[] sy, float[] sr) {
+    private void renderBodies(List<SimObject> objects, float[] sx, float[] sy, float[] sr, double simDt) {
         // Delegate all celestial body rendering (textured + small dots).
         if (celestialBodyRenderer != null) {
-            celestialBodyRenderer.render(objects, sx, sy, sr);
+            celestialBodyRenderer.render(objects, sx, sy, sr, simDt);
         }
     }
 

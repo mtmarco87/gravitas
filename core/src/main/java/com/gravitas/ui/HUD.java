@@ -22,7 +22,7 @@ import java.util.function.BooleanSupplier;
  * Top-left : simulation time, time warp, pause indicator
  * Bottom-left: selected object details + scale bar
  * Top-right : controls legend (toggleable with H)
- * Bottom-right: mode indicators (V = visual scale, T = overlays)
+ * Bottom-right: mode indicators (V = visual scale, T = overlays, X = FX menu)
  */
 public class HUD {
 
@@ -33,9 +33,15 @@ public class HUD {
     private static final Color PAUSED_COLOR = new Color(1.0f, 0.6f, 0.2f, 1f);
     private static final Color INFO_COLOR = new Color(0.7f, 0.9f, 0.7f, 1f);
     private static final Color DIM_COLOR = new Color(0.6f, 0.6f, 0.6f, 0.8f);
+    private static final Color SELECTION_COLOR = new Color(0.18f, 0.32f, 0.42f, 0.82f);
+    private static final Color TITLE_COLOR = new Color(0.72f, 0.92f, 0.98f, 1f);
+    private static final Color STATUS_PILL_COLOR = new Color(0.14f, 0.46f, 0.28f, 0.92f);
+    private static final Color STATUS_TEXT_COLOR = new Color(0.92f, 1.0f, 0.92f, 1f);
 
     private static final float LEGEND_PAD = 10f;
     private static final Color PANEL_COLOR = new Color(0.04f, 0.04f, 0.08f, 0.50f);
+    private static final float STATUS_PILL_PAD_X = 8f;
+    private static final float STATUS_PILL_HEIGHT = 18f;
 
     private final BitmapFont font;
     private final PhysicsEngine physics;
@@ -119,6 +125,10 @@ public class HUD {
         // ---- Controls legend (top-right) ----
         if (showLegend) {
             renderLegend(batch, screenWidth, screenHeight);
+        }
+
+        if (input.isCelestialFxMenuOpen()) {
+            renderCelestialFxPopup(batch, screenWidth, screenHeight);
         }
     }
 
@@ -209,6 +219,7 @@ public class HUD {
         String ffText = "P: Follow [" + camera.getFollowFrameMode().hudLabel() + "]";
         String vsText = "V: Visual Scale [" + (input.isVisualScaleMode() ? "ON" : "OFF") + "]";
         String opText = "T: Overlays [" + input.getOverlayArtifactsMode().hudLabel() + "]";
+        String fxText = "X: FX Settings [" + (input.isCelestialFxMenuOpen() ? "ON" : "OFF") + "]";
         String lgText = "H: Help [" + (showLegend ? "ON" : "OFF") + "]";
         MeasureTool mt = input.getMeasureTool();
         String mtText = "M: Measure [" + (mt != null && mt.isActive() ? "ON" : "OFF") + "]";
@@ -227,8 +238,10 @@ public class HUD {
         font.draw(batch, opText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 5);
         layout.setText(font, mtText);
         font.draw(batch, mtText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 4);
+        layout.setText(font, fxText);
+        font.draw(batch, fxText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 3);
         layout.setText(font, lgText);
-        font.draw(batch, lgText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 3);
+        font.draw(batch, lgText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 2);
     }
 
     // -------------------------------------------------------------------------
@@ -253,7 +266,7 @@ public class HUD {
                 "T            overlays",
                 "Y            orbit style",
                 "M            measure",
-                "X            celestial FX",
+                "X            FX settings",
                 "H            help",
                 "Q            quit",
         };
@@ -291,6 +304,82 @@ public class HUD {
         for (String line : lines) {
             font.draw(batch, line, textX, textY);
             textY -= LINE_HEIGHT;
+        }
+    }
+
+    private void renderCelestialFxPopup(SpriteBatch batch, int screenWidth, int screenHeight) {
+        String title = input.getCelestialFxMenuTitle();
+        String hint = input.getCelestialFxMenuHint();
+        String statusText = input.getCelestialFxStatusText();
+        boolean showStatus = input.isCelestialFxStatusVisible();
+        int optionCount = input.getCelestialFxMenuOptionCount();
+
+        float maxW = 0f;
+        layout.setText(font, title);
+        maxW = Math.max(maxW, layout.width);
+        layout.setText(font, hint);
+        maxW = Math.max(maxW, layout.width);
+        if (showStatus) {
+            layout.setText(font, statusText);
+            maxW = Math.max(maxW, layout.width + STATUS_PILL_PAD_X * 2f);
+        }
+        for (int i = 0; i < optionCount; i++) {
+            String optionLine = input.getCelestialFxOptionLine(i);
+            layout.setText(font, optionLine);
+            maxW = Math.max(maxW, layout.width);
+        }
+
+        float panelW = maxW + LEGEND_PAD * 2f;
+        float panelH = LEGEND_PAD * 2f + LINE_HEIGHT * (optionCount + 2.6f);
+        float panelX = input.resolveCelestialFxPanelX(screenWidth, panelW);
+        float panelY = input.resolveCelestialFxPanelY(screenHeight, panelH);
+        input.setCelestialFxPanelBounds(panelX, panelY, panelW, panelH);
+        float titleY = panelY + panelH - LEGEND_PAD - LINE_HEIGHT * 0.15f;
+        float hintY = titleY - LINE_HEIGHT;
+        float optionsTopY = hintY - LINE_HEIGHT * 1.3f;
+
+        batch.end();
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        screenCam.setToOrtho(false, screenWidth, screenHeight);
+        screenCam.update();
+        shapeRenderer.setProjectionMatrix(screenCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(PANEL_COLOR);
+        shapeRenderer.rect(panelX, panelY, panelW, panelH);
+
+        int selection = input.getCelestialFxMenuSelection();
+        float selectedY = optionsTopY - selection * LINE_HEIGHT - LINE_HEIGHT * 0.85f;
+        shapeRenderer.setColor(SELECTION_COLOR);
+        shapeRenderer.rect(panelX + 6f, selectedY, panelW - 12f, LINE_HEIGHT * 1.05f);
+        if (showStatus) {
+            layout.setText(font, statusText);
+            float statusW = layout.width + STATUS_PILL_PAD_X * 2f;
+            float statusX = panelX + panelW - LEGEND_PAD - statusW;
+            float statusY = panelY + panelH - LEGEND_PAD - STATUS_PILL_HEIGHT;
+            shapeRenderer.setColor(STATUS_PILL_COLOR);
+            shapeRenderer.rect(statusX, statusY, statusW, STATUS_PILL_HEIGHT);
+        }
+        shapeRenderer.end();
+        batch.begin();
+
+        font.setColor(TITLE_COLOR);
+        font.draw(batch, title, panelX + LEGEND_PAD, titleY);
+        if (showStatus) {
+            layout.setText(font, statusText);
+            float statusW = layout.width + STATUS_PILL_PAD_X * 2f;
+            float statusX = panelX + panelW - LEGEND_PAD - statusW;
+            float statusY = panelY + panelH - LEGEND_PAD - 3f;
+            font.setColor(STATUS_TEXT_COLOR);
+            font.draw(batch, statusText, statusX + STATUS_PILL_PAD_X, statusY);
+        }
+        font.setColor(DIM_COLOR);
+        font.draw(batch, hint, panelX + LEGEND_PAD, hintY);
+
+        for (int i = 0; i < optionCount; i++) {
+            String optionLine = input.getCelestialFxOptionLine(i);
+            font.setColor(i == selection ? TEXT_COLOR : DIM_COLOR);
+            font.draw(batch, optionLine, panelX + LEGEND_PAD, optionsTopY - i * LINE_HEIGHT);
         }
     }
 

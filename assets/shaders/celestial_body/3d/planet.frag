@@ -13,8 +13,12 @@ varying vec3 v_localPos;
 varying vec3 v_worldPos;
 
 uniform sampler2D u_texture;
+uniform sampler2D u_nightTexture;
+uniform float u_hasNightTexture;
+uniform float u_enableCelestialFx;
 uniform float u_isStar;        // 1.0 for stars (no limb darkening)
 uniform vec3  u_baseColor;     // fallback colour for near-black regions
+uniform vec3  u_lightDirWorld;
 uniform float u_rotation;      // axial rotation in radians
 
 const float PI = 3.14159265;
@@ -30,18 +34,27 @@ void main() {
     float seamGrad = fwidth(texUV.x);
     float lodBias  = -smoothstep(0.05, 0.4, seamGrad) * 10.0;
 
+    vec3 worldN = normalize(v_normal);
     vec4 texColor = texture2D(u_texture, texUV, lodBias);
-
-    // Partial-texture fill
     float lum = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
     float fill = 1.0 - smoothstep(0.01, 0.06, lum);
     texColor.rgb = mix(texColor.rgb, u_baseColor, fill);
+
+    if (u_enableCelestialFx > 0.5 && u_isStar < 0.5) {
+        float daylight = smoothstep(-0.10, 0.10, dot(worldN, normalize(u_lightDirWorld)));
+        vec3 litBase = texColor.rgb * mix(0.14, 1.0, daylight);
+        if (u_hasNightTexture > 0.5) {
+            vec3 nightColor = texture2D(u_nightTexture, texUV, lodBias).rgb;
+            texColor.rgb = mix(nightColor, litBase, daylight);
+        } else {
+            texColor.rgb = litBase;
+        }
+    }
 
     // Limb darkening: dot(normal, viewDir) gives cosine of view angle.
     float limb = 1.0;
     float edgeSoftness = 1.0;
     if (u_isStar < 0.5) {
-        vec3 worldN = normalize(v_normal);
         vec3 viewDir = normalize(-v_worldPos);
         float NdotV = max(0.0, dot(worldN, viewDir));
         limb = mix(0.28, 1.0, pow(NdotV, 0.68));

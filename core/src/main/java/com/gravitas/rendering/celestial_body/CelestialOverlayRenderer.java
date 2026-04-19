@@ -2,6 +2,7 @@ package com.gravitas.rendering.celestial_body;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
@@ -9,6 +10,7 @@ import com.gravitas.entities.CelestialBody;
 import com.gravitas.entities.SimObject;
 import com.gravitas.rendering.core.ProjectedEllipse;
 import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.util.AngleUtils;
 
 import java.util.List;
 
@@ -24,8 +26,11 @@ final class CelestialOverlayRenderer {
     private static final float STAR_GLOW_SCALE = 1.60f;
     private static final float STAR_GLOW_NEAR_PX = 380f;
     private static final float STAR_GLOW_FAR_PX = 180f;
+    private static final float EARTH_ATMOSPHERE_DENSITY = 1.225f;
+    private static final float DENSE_ATMOSPHERE_DENSITY = 5.3f;
     private static final float CLOUD_NEAR_PX = 2000f;
     private static final float CLOUD_FAR_PX = 120f;
+    private static final double CLOUD_ROTATION_WRAP = Math.PI * 2.0 * 200.0;
     private static final int DEFAULT_STAR_CORE_COLOR = 0xFFF2CCFF;
     private static final int DEFAULT_STAR_EDGE_COLOR = 0xFFD27FFF;
 
@@ -37,8 +42,11 @@ final class CelestialOverlayRenderer {
     private final Matrix4 modelMatrix = new Matrix4();
     private final Matrix4 mvpMatrix = new Matrix4();
     private final Matrix4 bodyRotationMatrix = new Matrix4();
+    private final Matrix4 lightRotationMatrix = new Matrix4();
     private final Matrix4 bodyToCameraMatrix = new Matrix4();
     private final float[] glowVerts = new float[16];
+    private final float[] scratchWorldLightDir = new float[3];
+    private final float[] scratchLocalLightDir = new float[3];
 
     CelestialOverlayRenderer(WorldCamera camera, CelestialAssetsRenderer assets,
             float minTextureDiameterPx, float logDepthC) {
@@ -49,8 +57,9 @@ final class CelestialOverlayRenderer {
     }
 
     void renderClouds3D(List<SimObject> objects, float[] screenR, Matrix4 vp,
-            float cloudTime, boolean celestialFx) {
-        if (!celestialFx)
+            float cloudTime, CelestialFxSettings.CloudFxMode cloudFxMode,
+            CelestialFxSettings fxSettings) {
+        if (cloudFxMode == null || cloudFxMode.isOff())
             return;
         int n = objects.size();
         Gdx.gl.glDepthMask(false);
@@ -67,7 +76,9 @@ final class CelestialOverlayRenderer {
             SimObject obj = objects.get(i);
             if (!obj.active || !(obj instanceof CelestialBody cb))
                 continue;
-            if (!cb.clouds.enabled)
+            boolean proceduralEnabled = cloudFxMode.proceduralEnabled() && cb.clouds.hasProcedural();
+            boolean textureEnabled = cloudFxMode.texturesEnabled() && cb.clouds.hasTexture();
+            if (!cb.clouds.configured || (!proceduralEnabled && !textureEnabled))
                 continue;
             float diameter = screenR[i] * 2f;
             if (diameter < minTextureDiameterPx)
@@ -96,8 +107,16 @@ final class CelestialOverlayRenderer {
             cloud3dShader.setUniformf("u_axisX", ellipse.axisXX, ellipse.axisXY);
             cloud3dShader.setUniformf("u_axisY", ellipse.axisYX, ellipse.axisYY);
             setCloudSurfaceFrame(cloud3dShader, cb, ellipse);
-            cloud3dShader.setUniformf("u_rotation", (float) cb.rotationAngle);
+            // Wider local wrap keeps cloud spin stable: avoids precision loss and wrap
+            // jumps.
+            float cloudRotation = (float) AngleUtils.wrapAngle(cb.rotationAngleContinuous, CLOUD_ROTATION_WRAP);
+            cloud3dShader.setUniformf("u_cloudRotation", cloudRotation);
             cloud3dShader.setUniformf("u_zoomFade", zoomFade);
+            cloud3dShader.setUniformf("u_enableCloudProcedural", proceduralEnabled ? 1.0f : 0.0f);
+            cloud3dShader.setUniformf("u_cloudProceduralPreset", cb.clouds.procedural.shaderValue());
+            applyCloudFxUniforms(cloud3dShader, fxSettings);
+            setLocalLightDirUniform(cloud3dShader, cb);
+            bindCloudTexture(cloud3dShader, cb, textureEnabled);
 
             float cr = ((cb.clouds.color >> 24) & 0xFF) / 255f;
             float cg = ((cb.clouds.color >> 16) & 0xFF) / 255f;
@@ -112,7 +131,8 @@ final class CelestialOverlayRenderer {
         Gdx.gl.glDepthMask(true);
     }
 
-    void renderAtmosphereGlow3D(List<SimObject> objects, float[] screenR, Matrix4 vp) {
+    void renderAtmosphereGlow3D(List<SimObject> objects, float[] screenR, Matrix4 vp,
+            CelestialFxSettings fxSettings) {
         int n = objects.size();
         Gdx.gl.glDepthMask(false);
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
@@ -158,7 +178,12 @@ final class CelestialOverlayRenderer {
                     ellipse.centerY - centerScreen.y);
             atmosphere3dShader.setUniformf("u_axisX", ellipse.axisXX * glowScale, ellipse.axisXY * glowScale);
             atmosphere3dShader.setUniformf("u_axisY", ellipse.axisYX * glowScale, ellipse.axisYY * glowScale);
+            setCloudSurfaceFrame(atmosphere3dShader, cb, ellipse);
+            setLocalLightDirUniform(atmosphere3dShader, cb);
             setAtmosphereGlowColor(atmosphere3dShader, cb);
+            atmosphere3dShader.setUniformf("u_isStar", cb.bodyType == CelestialBody.BodyType.STAR ? 1.0f : 0.0f);
+            atmosphere3dShader.setUniformf("u_denseAtmosphereFactor", atmosphereDenseFactor(cb));
+            applyAtmosphereFxUniforms(atmosphere3dShader, fxSettings);
             atmosphere3dShader.setUniformf("u_intensity", intensity);
             atmosphere3dShader.setUniformf("u_innerRadius", innerFrac);
 
@@ -234,8 +259,9 @@ final class CelestialOverlayRenderer {
     }
 
     void renderClouds2D(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR,
-            float cloudTime, boolean celestialFx) {
-        if (!celestialFx)
+            float cloudTime, CelestialFxSettings.CloudFxMode cloudFxMode,
+            CelestialFxSettings fxSettings) {
+        if (cloudFxMode == null || cloudFxMode.isOff())
             return;
         int n = objects.size();
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
@@ -248,7 +274,9 @@ final class CelestialOverlayRenderer {
             SimObject obj = objects.get(i);
             if (!obj.active || !(obj instanceof CelestialBody cb))
                 continue;
-            if (!cb.clouds.enabled)
+            boolean proceduralEnabled = cloudFxMode.proceduralEnabled() && cb.clouds.hasProcedural();
+            boolean textureEnabled = cloudFxMode.texturesEnabled() && cb.clouds.hasTexture();
+            if (!cb.clouds.configured || (!proceduralEnabled && !textureEnabled))
                 continue;
             float diameter = screenR[i] * 2f;
             if (diameter < minTextureDiameterPx)
@@ -259,8 +287,16 @@ final class CelestialOverlayRenderer {
             zoomFade = zoomFade * zoomFade;
 
             setTopViewSurfaceFrame(cloudShader, cb);
-            cloudShader.setUniformf("u_rotation", (float) cb.rotationAngle);
+            // Wider local wrap keeps cloud spin stable: avoids precision loss and wrap
+            // jumps.
+            float cloudRotation = (float) AngleUtils.wrapAngle(cb.rotationAngleContinuous, CLOUD_ROTATION_WRAP);
+            cloudShader.setUniformf("u_cloudRotation", cloudRotation);
             cloudShader.setUniformf("u_zoomFade", zoomFade);
+            cloudShader.setUniformf("u_enableCloudProcedural", proceduralEnabled ? 1.0f : 0.0f);
+            cloudShader.setUniformf("u_cloudProceduralPreset", cb.clouds.procedural.shaderValue());
+            applyCloudFxUniforms(cloudShader, fxSettings);
+            setLocalLightDirUniform(cloudShader, cb);
+            bindCloudTexture(cloudShader, cb, textureEnabled);
             float cr = ((cb.clouds.color >> 24) & 0xFF) / 255f;
             float cg = ((cb.clouds.color >> 16) & 0xFF) / 255f;
             float cbb = ((cb.clouds.color >> 8) & 0xFF) / 255f;
@@ -272,7 +308,8 @@ final class CelestialOverlayRenderer {
         }
     }
 
-    void renderAtmosphereGlow2D(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR) {
+    void renderAtmosphereGlow2D(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR,
+            CelestialFxSettings fxSettings) {
         int n = objects.size();
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
@@ -296,7 +333,12 @@ final class CelestialOverlayRenderer {
             if (intensity <= 0f)
                 continue;
 
+            setTopViewSurfaceFrame(atmosphereShader, cb);
+            setLocalLightDirUniform(atmosphereShader, cb);
             setAtmosphereGlowColor(atmosphereShader, cb);
+            atmosphereShader.setUniformf("u_isStar", cb.bodyType == CelestialBody.BodyType.STAR ? 1.0f : 0.0f);
+            atmosphereShader.setUniformf("u_denseAtmosphereFactor", atmosphereDenseFactor(cb));
+            applyAtmosphereFxUniforms(atmosphereShader, fxSettings);
             atmosphereShader.setUniformf("u_intensity", intensity);
             atmosphereShader.setUniformf("u_innerRadius", innerFrac);
 
@@ -344,6 +386,116 @@ final class CelestialOverlayRenderer {
         }
 
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    private void bindCloudTexture(ShaderProgram shader, CelestialBody cb, boolean textureEnabled) {
+        Texture cloudTexture = textureEnabled ? assets.getCloudTexture(cb) : null;
+        if (cloudTexture != null) {
+            cloudTexture.bind(0);
+            shader.setUniformi("u_cloudTexture", 0);
+            shader.setUniformf("u_hasCloudTexture", 1.0f);
+        } else {
+            shader.setUniformi("u_cloudTexture", 0);
+            shader.setUniformf("u_hasCloudTexture", 0.0f);
+        }
+        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
+    }
+
+    private void applyCloudFxUniforms(ShaderProgram shader, CelestialFxSettings fxSettings) {
+        CelestialFxSettings settings = fxSettings != null ? fxSettings : new CelestialFxSettings();
+        shader.setUniformi("u_cloudDayNightMode", settings.isCloudDayNightActive() ? 1 : 0);
+        shader.setUniformi("u_cloudTerminatorMode", settings.getCloudTerminatorMode().shaderValue());
+        shader.setUniformi("u_cloudCompositingMode", settings.getCloudCompositingMode().shaderValue());
+        shader.setUniformf("u_cloudTextureAlphaWeight", settings.getCloudTextureAlphaWeight());
+        shader.setUniformf("u_cloudProceduralAlphaWeight", settings.getCloudProceduralAlphaWeight());
+        shader.setUniformf("u_cloudProceduralTextureCoupling", settings.getCloudProceduralTextureCoupling());
+    }
+
+    private void applyAtmosphereFxUniforms(ShaderProgram shader, CelestialFxSettings fxSettings) {
+        CelestialFxSettings settings = fxSettings != null ? fxSettings : new CelestialFxSettings();
+        shader.setUniformi("u_atmosphereDayNightMode", settings.isAtmosphereDayNightActive() ? 1 : 0);
+        shader.setUniformf("u_atmosphereNightOuterFloor", settings.getAtmosphereNightOuterFloor());
+        shader.setUniformf("u_atmosphereNightInnerFloor", settings.getAtmosphereNightInnerFloor());
+        shader.setUniformf("u_atmosphereDenseNightOuterFloor", settings.getAtmosphereDenseNightOuterFloor());
+        shader.setUniformf("u_atmosphereDenseNightInnerFloor", settings.getAtmosphereDenseNightInnerFloor());
+    }
+
+    private void setLocalLightDirUniform(ShaderProgram shader, CelestialBody cb) {
+        if (!computeLocalLightDir(cb, scratchLocalLightDir)) {
+            shader.setUniformf("u_lightDirLocal", 0f, 1f, 0f);
+            return;
+        }
+
+        shader.setUniformf("u_lightDirLocal",
+                scratchLocalLightDir[0], scratchLocalLightDir[1], scratchLocalLightDir[2]);
+    }
+
+    private boolean computeLocalLightDir(CelestialBody cb, float[] out) {
+        if (!computeWorldLightDir(cb, scratchWorldLightDir)) {
+            out[0] = 0f;
+            out[1] = 1f;
+            out[2] = 0f;
+            return false;
+        }
+
+        camera.buildBodyRotationMatrix(lightRotationMatrix, cb, cb.rotationAngle);
+        float[] m = lightRotationMatrix.val;
+        out[0] = scratchWorldLightDir[0] * m[Matrix4.M00]
+                + scratchWorldLightDir[1] * m[Matrix4.M10]
+                + scratchWorldLightDir[2] * m[Matrix4.M20];
+        out[1] = scratchWorldLightDir[0] * m[Matrix4.M01]
+                + scratchWorldLightDir[1] * m[Matrix4.M11]
+                + scratchWorldLightDir[2] * m[Matrix4.M21];
+        out[2] = scratchWorldLightDir[0] * m[Matrix4.M02]
+                + scratchWorldLightDir[1] * m[Matrix4.M12]
+                + scratchWorldLightDir[2] * m[Matrix4.M22];
+
+        float len = (float) Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+        if (len <= 1e-6f) {
+            out[0] = 0f;
+            out[1] = 1f;
+            out[2] = 0f;
+            return false;
+        }
+
+        out[0] /= len;
+        out[1] /= len;
+        out[2] /= len;
+        return true;
+    }
+
+    private boolean computeWorldLightDir(CelestialBody cb, float[] out) {
+        CelestialBody lightSource = resolvePrimaryLightSource(cb);
+        if (lightSource == null || lightSource == cb) {
+            out[0] = 0f;
+            out[1] = 0f;
+            out[2] = 1f;
+            return false;
+        }
+
+        float ldx = (float) (lightSource.x - cb.x);
+        float ldy = (float) (lightSource.y - cb.y);
+        float ldz = (float) (lightSource.z - cb.z);
+        float len = (float) Math.sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
+        if (len <= 1e-6f) {
+            out[0] = 0f;
+            out[1] = 0f;
+            out[2] = 1f;
+            return false;
+        }
+
+        out[0] = ldx / len;
+        out[1] = ldy / len;
+        out[2] = ldz / len;
+        return true;
+    }
+
+    private CelestialBody resolvePrimaryLightSource(CelestialBody body) {
+        CelestialBody root = body;
+        while (root.parent != null) {
+            root = root.parent;
+        }
+        return root.bodyType == CelestialBody.BodyType.STAR ? root : null;
     }
 
     private void setCloudSurfaceFrame(ShaderProgram shader, CelestialBody cb, ProjectedEllipse ellipse) {
@@ -415,6 +567,20 @@ final class CelestialOverlayRenderer {
         float density = (float) cb.atmosphereDensitySeaLevel;
         float intensity = (float) (0.15 + 0.15 * Math.log1p(density * 2.0));
         return Math.min(0.50f, Math.max(0.15f, intensity));
+    }
+
+    private float atmosphereDenseFactor(CelestialBody cb) {
+        if (cb.bodyType == CelestialBody.BodyType.STAR)
+            return 0f;
+
+        float density = (float) cb.atmosphereDensitySeaLevel;
+        if (density <= EARTH_ATMOSPHERE_DENSITY)
+            return 0f;
+
+        float range = Math.max(1e-4f, DENSE_ATMOSPHERE_DENSITY - EARTH_ATMOSPHERE_DENSITY);
+        float normalized = (density - EARTH_ATMOSPHERE_DENSITY) / range;
+        normalized = Math.min(1f, Math.max(0f, normalized));
+        return normalized * normalized * (3f - 2f * normalized);
     }
 
     private void setAtmosphereGlowColor(ShaderProgram shader, CelestialBody cb) {

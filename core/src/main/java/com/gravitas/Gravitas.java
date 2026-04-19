@@ -251,8 +251,8 @@ public class Gravitas extends ApplicationAdapter {
         // Sync visual-scale mode from input state.
         simRenderer.setVisualScaleMode(inputProcessor.isVisualScaleMode());
 
-        // Sync celestial FX toggle.
-        simRenderer.setCelestialFx(inputProcessor.isCelestialFx());
+        // Sync celestial FX options.
+        simRenderer.setCelestialFxSettings(inputProcessor.getCelestialFxSettings());
 
         // Sync trail visibility toggle.
         simRenderer.setTrailsEnabled(inputProcessor.isShowTrails());
@@ -264,7 +264,7 @@ public class Gravitas extends ApplicationAdapter {
         orbitPredictor.setEnabled(inputProcessor.isShowOrbitPredictors());
 
         // H key toggles legend.
-        if (Gdx.input.isKeyJustPressed(Input.Keys.H)) {
+        if (!inputProcessor.isCelestialFxMenuOpen() && Gdx.input.isKeyJustPressed(Input.Keys.H)) {
             hud.toggleLegend();
         }
 

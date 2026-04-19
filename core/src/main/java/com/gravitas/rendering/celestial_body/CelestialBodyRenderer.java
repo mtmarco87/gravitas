@@ -31,6 +31,8 @@ import java.util.Map;
 public class CelestialBodyRenderer {
 
     private static final float MIN_TEXTURE_DIAMETER_PX = 8f;
+    private static final float CLOUD_WEATHER_TIME_SCALE = 0.004f;
+    private static final float CLOUD_WEATHER_TIME_WRAP = 1_000_000f;
 
     /**
      * Logarithmic depth constant: 2.0 / log2(farClip + 1.0).
@@ -48,12 +50,14 @@ public class CelestialBodyRenderer {
     private final Matrix4 bodyRotationMatrix = new Matrix4();
 
     private final float[] glowVerts = new float[16];
+    private final float[] scratchWorldLightDir = new float[3];
+    private final float[] scratchLocalLightDir = new float[3];
 
     private float cloudTime = 0f;
-    private boolean celestialFx = true;
+    private CelestialFxSettings celestialFxSettings = new CelestialFxSettings();
 
-    public void setCelestialFx(boolean enabled) {
-        this.celestialFx = enabled;
+    public void setCelestialFxSettings(CelestialFxSettings settings) {
+        this.celestialFxSettings = settings != null ? settings : new CelestialFxSettings();
     }
 
     public CelestialBodyRenderer(WorldCamera camera, ShapeRenderer shapeRenderer, String systemFolder) {
@@ -67,8 +71,14 @@ public class CelestialBodyRenderer {
     // Rendering — mode router
     // -------------------------------------------------------------------------
 
-    public void render(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR) {
-        cloudTime += Gdx.graphics.getDeltaTime();
+    public void render(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR,
+            double simDt) {
+        // Weather time follows simulated time so cloud motion scales with warp.
+        cloudTime += (float) simDt * CLOUD_WEATHER_TIME_SCALE;
+        // Keep cloud phase bounded to avoid long-run precision loss and pixelation.
+        if (Math.abs(cloudTime) > CLOUD_WEATHER_TIME_WRAP) {
+            cloudTime %= CLOUD_WEATHER_TIME_WRAP;
+        }
 
         if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
             render3D(objects, screenX, screenY, screenR);
@@ -124,8 +134,9 @@ public class CelestialBodyRenderer {
         renderTexturedBodies3D(objects, screenR, vp, handled);
         renderSmallBodies3D(objects, screenX, screenY, screenR, vp, vdx, vdy, vdz, handled);
         renderRings3D(objects, screenR, vp);
-        overlayRenderer.renderClouds3D(objects, screenR, vp, cloudTime, celestialFx);
-        overlayRenderer.renderAtmosphereGlow3D(objects, screenR, vp);
+        overlayRenderer.renderClouds3D(objects, screenR, vp, cloudTime, celestialFxSettings.getCloudFxMode(),
+                celestialFxSettings);
+        overlayRenderer.renderAtmosphereGlow3D(objects, screenR, vp, celestialFxSettings);
 
         // Star glow (3D billboard with log depth — depth buffer occludes behind
         // planets)
@@ -156,8 +167,8 @@ public class CelestialBodyRenderer {
             if (screenR[i] * 2f < MIN_TEXTURE_DIAMETER_PX)
                 continue;
 
-            Texture tex = assets.getTexture(cb);
-            if (tex == null)
+            CelestialAssetsRenderer.SurfaceTextures surfaceTextures = assets.getSurfaceTextures(cb);
+            if (surfaceTextures == null || surfaceTextures.base == null)
                 continue;
             handled[i] = true;
 
@@ -169,8 +180,7 @@ public class CelestialBodyRenderer {
                     0);
             mvpMatrix.set(vp).mul(modelMatrix);
 
-            tex.bind(0);
-            planet3dShader.setUniformi("u_texture", 0);
+            bindPlanetTextures(planet3dShader, cb, surfaceTextures, true);
             planet3dShader.setUniformMatrix("u_mvp", mvpMatrix);
             planet3dShader.setUniformMatrix("u_model", modelMatrix);
             planet3dShader.setUniformf("u_isStar",
@@ -280,6 +290,7 @@ public class CelestialBodyRenderer {
                         ((color >> 8) & 0xFF) / 255f);
             }
             ring3dShader.setUniformf("u_opacity", cb.ring.opacity);
+            bindRingShadowUniforms(ring3dShader, cb, (float) (cb.radius / cb.ring.outerRadius));
             ring3dShader.setUniformMatrix("u_mvp", mvpMatrix);
 
             Gdx.gl.glDisable(GL20.GL_CULL_FACE);
@@ -295,8 +306,9 @@ public class CelestialBodyRenderer {
     private void render2D(List<SimObject> objects, float[] screenX, float[] screenY, float[] screenR) {
         renderTexturedBodies2D(objects, screenX, screenY, screenR);
         renderRings2D(objects, screenX, screenY, screenR);
-        overlayRenderer.renderClouds2D(objects, screenX, screenY, screenR, cloudTime, celestialFx);
-        overlayRenderer.renderAtmosphereGlow2D(objects, screenX, screenY, screenR);
+        overlayRenderer.renderClouds2D(objects, screenX, screenY, screenR, cloudTime,
+                celestialFxSettings.getCloudFxMode(), celestialFxSettings);
+        overlayRenderer.renderAtmosphereGlow2D(objects, screenX, screenY, screenR, celestialFxSettings);
         renderSmallBodies2D(objects, screenX, screenY, screenR);
         overlayRenderer.renderStarGlow2D(objects, screenX, screenY, screenR);
     }
@@ -322,26 +334,28 @@ public class CelestialBodyRenderer {
             if (diameter < MIN_TEXTURE_DIAMETER_PX)
                 continue;
 
-            Texture tex = assets.getTexture(cb);
-            if (tex == null)
+            CelestialAssetsRenderer.SurfaceTextures surfaceTextures = assets.getSurfaceTextures(cb);
+            if (surfaceTextures == null || surfaceTextures.base == null)
                 continue;
 
             planetShader.setUniformf("u_rotation", (float) cb.rotationAngle);
             planetShader.setUniformf("u_isStar",
                     cb.bodyType == CelestialBody.BodyType.STAR ? 1.0f : 0.0f);
             setTopViewSurfaceFrame(planetShader, cb, false);
+            bindPlanetTextures(planetShader, cb, surfaceTextures, false);
             float br = ((cb.color.base >> 24) & 0xFF) / 255f;
             float bg = ((cb.color.base >> 16) & 0xFF) / 255f;
             float bb = ((cb.color.base >> 8) & 0xFF) / 255f;
             planetShader.setUniformf("u_baseColor", br, bg, bb);
 
-            batch.draw(tex,
+            batch.draw(surfaceTextures.base,
                     screenX[i] - screenR[i], screenY[i] - screenR[i],
                     diameter, diameter);
             batch.flush();
         }
 
         batch.end();
+        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
     }
 
     /** Pass 1b: Planetary rings as screen-aligned annulus quads. */
@@ -392,11 +406,14 @@ public class CelestialBodyRenderer {
             ringShader.setUniformf("u_invAxisY", topViewRing.invAxisYx, topViewRing.invAxisYy);
             ringShader.setUniformf("u_bodyRadius", (float) (cb.radius / cb.ring.outerRadius));
             ringShader.setUniformf("u_localViewZ", topViewRing.localViewZx, topViewRing.localViewZy);
+            bindRingShadowUniforms(ringShader, cb, (float) (cb.radius / cb.ring.outerRadius));
 
             fillRect(screenX[i], screenY[i], topViewRing.boundsHalfWidth, topViewRing.boundsHalfHeight);
             assets.glowMesh().setVertices(glowVerts);
             assets.glowMesh().render(ringShader, GL20.GL_TRIANGLES);
         }
+
+        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
     }
 
     /**
@@ -419,7 +436,10 @@ public class CelestialBodyRenderer {
             if (!obj.active || !(obj instanceof CelestialBody cb))
                 continue;
             // Skip bodies already rendered as textured (≥8px with texture).
-            if (screenR[i] * 2f >= MIN_TEXTURE_DIAMETER_PX && assets.getTexture(cb) != null)
+            CelestialAssetsRenderer.SurfaceTextures surfaceTextures = assets.getSurfaceTextures(cb);
+            if (screenR[i] * 2f >= MIN_TEXTURE_DIAMETER_PX
+                    && surfaceTextures != null
+                    && surfaceTextures.base != null)
                 continue;
 
             if (RenderUtils.shouldSkipOverlappingMoon(obj, i, screenX, screenY, screenR, objIndex))
@@ -513,6 +533,51 @@ public class CelestialBodyRenderer {
         return projection;
     }
 
+    private void bindPlanetTextures(ShaderProgram shader, CelestialBody cb,
+            CelestialAssetsRenderer.SurfaceTextures surfaceTextures,
+            boolean bindBaseTexture) {
+        boolean enableSurfaceFx = celestialFxSettings.isDayNightEnabled()
+                && cb.bodyType != CelestialBody.BodyType.STAR
+                && surfaceTextures != null
+                && surfaceTextures.base != null
+                && setLightDirUniform(shader, cb);
+
+        if (bindBaseTexture) {
+            surfaceTextures.base.bind(0);
+        }
+        if (enableSurfaceFx && surfaceTextures.hasNightTexture()) {
+            surfaceTextures.night.bind(1);
+        }
+        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
+
+        shader.setUniformi("u_texture", 0);
+        shader.setUniformi("u_nightTexture", enableSurfaceFx && surfaceTextures.hasNightTexture() ? 1 : 0);
+        shader.setUniformf("u_hasNightTexture",
+                enableSurfaceFx && surfaceTextures.hasNightTexture() ? 1.0f : 0.0f);
+        shader.setUniformf("u_enableCelestialFx", enableSurfaceFx ? 1.0f : 0.0f);
+    }
+
+    private void bindRingShadowUniforms(ShaderProgram shader, CelestialBody cb, float bodyRadiusFrac) {
+        if (!celestialFxSettings.isRingShadowEnabled()) {
+            shader.setUniformf("u_enableRingShadow", 0.0f);
+            shader.setUniformf("u_lightDirLocal", 0f, 1f, 0f);
+            shader.setUniformf("u_bodyRadius", bodyRadiusFrac);
+            return;
+        }
+
+        if (!computeLocalLightDir(cb, scratchLocalLightDir)) {
+            shader.setUniformf("u_enableRingShadow", 0.0f);
+            shader.setUniformf("u_lightDirLocal", 0f, 1f, 0f);
+            shader.setUniformf("u_bodyRadius", bodyRadiusFrac);
+            return;
+        }
+
+        shader.setUniformf("u_enableRingShadow", 1.0f);
+        shader.setUniformf("u_lightDirLocal",
+                scratchLocalLightDir[0], scratchLocalLightDir[1], scratchLocalLightDir[2]);
+        shader.setUniformf("u_bodyRadius", bodyRadiusFrac);
+    }
+
     private static final class RingProjection {
         float invAxisXx;
         float invAxisXy;
@@ -535,6 +600,85 @@ public class CelestialBodyRenderer {
             vdz /= len;
         }
         shader.setUniformf("u_viewDir", vdx, vdy, vdz);
+    }
+
+    private boolean setLightDirUniform(ShaderProgram shader, CelestialBody cb) {
+        if (!computeWorldLightDir(cb, scratchWorldLightDir)) {
+            shader.setUniformf("u_lightDirWorld", 0f, 0f, 1f);
+            return false;
+        }
+
+        shader.setUniformf("u_lightDirWorld",
+                scratchWorldLightDir[0], scratchWorldLightDir[1], scratchWorldLightDir[2]);
+        return true;
+    }
+
+    private boolean computeWorldLightDir(CelestialBody cb, float[] out) {
+        CelestialBody lightSource = resolvePrimaryLightSource(cb);
+        if (lightSource == null || lightSource == cb) {
+            out[0] = 0f;
+            out[1] = 0f;
+            out[2] = 1f;
+            return false;
+        }
+
+        float ldx = (float) (lightSource.x - cb.x);
+        float ldy = (float) (lightSource.y - cb.y);
+        float ldz = (float) (lightSource.z - cb.z);
+        float len = (float) Math.sqrt(ldx * ldx + ldy * ldy + ldz * ldz);
+        if (len <= 1e-6f) {
+            out[0] = 0f;
+            out[1] = 0f;
+            out[2] = 1f;
+            return false;
+        }
+
+        out[0] = ldx / len;
+        out[1] = ldy / len;
+        out[2] = ldz / len;
+        return true;
+    }
+
+    private boolean computeLocalLightDir(CelestialBody cb, float[] out) {
+        if (!computeWorldLightDir(cb, scratchWorldLightDir)) {
+            out[0] = 0f;
+            out[1] = 1f;
+            out[2] = 0f;
+            return false;
+        }
+
+        camera.buildBodyRotationMatrix(bodyRotationMatrix, cb, 0.0);
+        float[] m = bodyRotationMatrix.val;
+        out[0] = scratchWorldLightDir[0] * m[Matrix4.M00]
+                + scratchWorldLightDir[1] * m[Matrix4.M10]
+                + scratchWorldLightDir[2] * m[Matrix4.M20];
+        out[1] = scratchWorldLightDir[0] * m[Matrix4.M01]
+                + scratchWorldLightDir[1] * m[Matrix4.M11]
+                + scratchWorldLightDir[2] * m[Matrix4.M21];
+        out[2] = scratchWorldLightDir[0] * m[Matrix4.M02]
+                + scratchWorldLightDir[1] * m[Matrix4.M12]
+                + scratchWorldLightDir[2] * m[Matrix4.M22];
+
+        float len = (float) Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2]);
+        if (len <= 1e-6f) {
+            out[0] = 0f;
+            out[1] = 1f;
+            out[2] = 0f;
+            return false;
+        }
+
+        out[0] /= len;
+        out[1] /= len;
+        out[2] /= len;
+        return true;
+    }
+
+    private CelestialBody resolvePrimaryLightSource(CelestialBody body) {
+        CelestialBody root = body;
+        while (root.parent != null) {
+            root = root.parent;
+        }
+        return root.bodyType == CelestialBody.BodyType.STAR ? root : null;
     }
 
     // -------------------------------------------------------------------------

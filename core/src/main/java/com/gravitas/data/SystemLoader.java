@@ -205,7 +205,7 @@ public class SystemLoader {
         body.atmosphereScaleHeight = jb.getDouble("atmosphereScaleHeight", 0);
         body.atmosphereDensitySeaLevel = jb.getDouble("atmosphereDensitySeaLevel", 0);
         body.color.base = parseOptionalColor(color, "base", "FFFFFF");
-        body.textureFile = jb.getString("texture", null);
+        parseSurfaceTexture(body, jb.get("texture"));
         body.color.glow = parseOptionalColor(color, "glow", null);
         body.color.core = parseOptionalColor(color, "core", null);
         body.color.edge = parseOptionalColor(color, "edge", null);
@@ -220,10 +220,66 @@ public class SystemLoader {
 
         // Cloud layer
         String cloudColorStr = clouds != null ? clouds.getString("color", null) : null;
-        body.clouds.enabled = clouds != null && clouds.getBoolean("enabled", false);
+        body.clouds.configured = clouds != null;
+        body.clouds.texture = clouds != null ? clouds.getString("texture", null) : null;
+        body.clouds.procedural = parseCloudProceduralPreset(clouds, body.clouds.hasTexture());
         body.clouds.color = cloudColorStr != null ? parseColor(cloudColorStr) : 0xFFFFFFFF;
 
         return body;
+    }
+
+    private void parseSurfaceTexture(CelestialBody body, JsonValue textureJson) {
+        if (textureJson == null) {
+            return;
+        }
+
+        if (textureJson.isString()) {
+            body.texture.base = textureJson.asString();
+            return;
+        }
+
+        if (textureJson.isObject()) {
+            body.texture.base = textureJson.getString("base", textureJson.getString("day", null));
+            body.texture.night = textureJson.getString("night", null);
+            return;
+        }
+
+        Gdx.app.error(TAG, "Invalid texture definition for " + body.name + "; expected string or object");
+    }
+
+    private CelestialBody.CloudProfile.ProceduralPreset parseCloudProceduralPreset(JsonValue clouds,
+            boolean hasTexture) {
+        if (clouds == null || !clouds.has("procedural")) {
+            return hasTexture
+                    ? CelestialBody.CloudProfile.ProceduralPreset.NONE
+                    : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+        }
+
+        JsonValue procedural = clouds.get("procedural");
+        if (procedural.isString()) {
+            String preset = procedural.asString().trim().toLowerCase(Locale.ROOT);
+            return switch (preset) {
+                case "", "light" -> CelestialBody.CloudProfile.ProceduralPreset.LIGHT;
+                case "medium" -> CelestialBody.CloudProfile.ProceduralPreset.MEDIUM;
+                case "heavy" -> CelestialBody.CloudProfile.ProceduralPreset.HEAVY;
+                case "natural" -> CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+                case "none" -> CelestialBody.CloudProfile.ProceduralPreset.NONE;
+                default -> {
+                    Gdx.app.error(TAG,
+                            "Unknown cloud procedural preset '" + procedural.asString()
+                                    + "'; using contextual default");
+                    yield hasTexture
+                            ? CelestialBody.CloudProfile.ProceduralPreset.NONE
+                            : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+                }
+            };
+        }
+
+        Gdx.app.error(TAG,
+                "Invalid clouds.procedural value; expected one of: natural, light, medium, heavy, none. Using contextual default");
+        return hasTexture
+                ? CelestialBody.CloudProfile.ProceduralPreset.NONE
+                : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
     }
 
     private SpinAxisSpec parseSpinAxisSpec(CelestialBody body, JsonValue bodyJson, JsonValue spinAxisJson) {
