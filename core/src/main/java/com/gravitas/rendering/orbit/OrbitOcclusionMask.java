@@ -2,9 +2,10 @@ package com.gravitas.rendering.orbit;
 
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Matrix4;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
 import com.gravitas.rendering.core.ProjectedEllipse;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
 
 import java.util.ArrayList;
@@ -154,7 +155,7 @@ public class OrbitOcclusionMask {
 
     public OrbitOcclusionMask(WorldCamera camera, List<SimObject> objects, float[] screenRadii) {
         this.camera = camera;
-        this.enabled = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+        this.enabled = camera.getMode() == CameraMode.FREE_CAM;
         if (!enabled) {
             return;
         }
@@ -295,9 +296,7 @@ public class OrbitOcclusionMask {
             return null;
         }
 
-        camera.buildBodyRotationMatrix(bodyRotationMatrix,
-                body,
-                0.0);
+        camera.buildBodyAxisFrameMatrix(bodyRotationMatrix, body);
 
         float[] m = bodyRotationMatrix.val;
         double ux = m[Matrix4.M00];

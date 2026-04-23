@@ -1,18 +1,25 @@
 package com.gravitas.ui;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.gravitas.entities.Belt;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.Universe;
+import com.gravitas.entities.bodies.Belt;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.enums.BodyType;
+import com.gravitas.entities.core.SimObject;
 import com.gravitas.physics.PhysicsEngine;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.settings.SimulationSettings;
+import com.gravitas.settings.enums.SpinMode;
 import com.gravitas.util.FormatUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -37,30 +44,32 @@ public class BodyTooltip {
     private static final float PAD = 8f;
     private static final float LINE_H = 17f;
     private static final float LOCK_RELATION_GAP = LINE_H * 0.45f;
+    private static final float SECTION_LAYOUT_GAP = 18f;
+    private static final float TITLE_CONTENT_GAP = LINE_H * 0.45f;
     private static final Color BG_COLOR = new Color(0.08f, 0.08f, 0.10f, 0.85f);
     private static final Color LOCKED_BG_COLOR = new Color(0.08f, 0.12f, 0.10f, 0.88f);
     private static final Color TEXT_COLOR = new Color(0.95f, 0.95f, 0.95f, 1f);
     private static final Color TITLE_COLOR = new Color(0.5f, 0.85f, 1.0f, 1f);
     private static final Color LOCKED_TITLE_COLOR = new Color(0.72f, 0.98f, 0.80f, 1f);
-    private static final String LOCK_RELATION_MARKER = "__lock_relation_marker__";
+    private static final String SECTION_GAP_MARKER = "__section_gap_marker__";
+    private static final TooltipLayoutMode TOOLTIP_LAYOUT_MODE = TooltipLayoutMode.VERTICAL;
 
     private final BitmapFont font;
     private final WorldCamera camera;
     private final PhysicsEngine physics;
     private final ShapeRenderer shapeRenderer;
     private final GlyphLayout layout = new GlyphLayout();
-    private List<Belt> belts = List.of();
+    private final Universe universe;
+    private final SimulationSettings simulationSettings;
 
     public BodyTooltip(FontManager fontManager, WorldCamera camera, PhysicsEngine physics,
-            ShapeRenderer shapeRenderer) {
+            ShapeRenderer shapeRenderer, Universe universe, SimulationSettings simulationSettings) {
         this.font = fontManager.labelFont;
         this.camera = camera;
         this.physics = physics;
         this.shapeRenderer = shapeRenderer;
-    }
-
-    public void setBelts(List<Belt> belts) {
-        this.belts = belts;
+        this.universe = universe;
+        this.simulationSettings = simulationSettings;
     }
 
     /**
@@ -70,109 +79,54 @@ public class BodyTooltip {
     public void render(SpriteBatch batch, int screenWidth, int screenHeight) {
         int mouseX = Gdx.input.getX();
         int mouseY = Gdx.input.getY(); // top-origin (LWJGL3)
+        boolean advancedOnly = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
+                || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT);
+        boolean showAdvancedInline = simulationSettings.isAdvancedTooltipDataEnabled();
 
         // Convert to bottom-left origin for our worldToScreen comparisons
         int mouseYFlipped = screenHeight - mouseY;
 
-        SimObject hovered = findHovered(mouseX, mouseYFlipped, physics.getObjects());
+        SimObject hovered = findHovered(mouseX, mouseYFlipped, universe.getSimObjects());
         boolean lockedTargetHovered = hovered != null && hovered == camera.getFollowTarget();
-        String[] lines;
+        TooltipContent tooltipContent;
         if (hovered != null) {
-            lines = buildLines(hovered, lockedTargetHovered);
+            tooltipContent = buildTooltipContent(hovered, lockedTargetHovered, advancedOnly, showAdvancedInline);
         } else {
             Belt belt = findHoveredBelt(mouseX, mouseYFlipped);
             if (belt == null)
                 return;
-            lines = buildBeltLines(belt);
+            String[] beltLines = buildBeltLines(belt);
+            java.util.List<String[]> sections = new ArrayList<>();
+            sections.add(java.util.Arrays.copyOfRange(beltLines, 1, beltLines.length));
+            tooltipContent = new TooltipContent(beltLines[0], sections);
         }
-
-        // Split each line into [label, value] on the tab character.
-        // Title row (index 0) has no tab — it spans full width.
-        String[] labels = new String[lines.length];
-        String[] values = new String[lines.length];
-        for (int i = 0; i < lines.length; i++) {
-            if (LOCK_RELATION_MARKER.equals(lines[i])) {
-                labels[i] = LOCK_RELATION_MARKER;
-                values[i] = null;
-                continue;
-            }
-            int tab = lines[i].indexOf('\t');
-            if (tab >= 0) {
-                labels[i] = lines[i].substring(0, tab);
-                values[i] = lines[i].substring(tab + 1);
-            } else {
-                labels[i] = lines[i];
-                values[i] = null;
+        java.util.List<TooltipSection> sections = new ArrayList<>();
+        for (String[] sectionLines : tooltipContent.sections) {
+            TooltipSection section = createTooltipSection(sectionLines);
+            if (section != null) {
+                sections.add(section);
             }
         }
-
-        // Measure label column width (excluding title row).
-        float labelColW = 0;
-        for (int i = 1; i < labels.length; i++) {
-            if (LOCK_RELATION_MARKER.equals(labels[i])) {
-                continue;
-            }
-            layout.setText(font, labels[i]);
-            if (layout.width > labelColW)
-                labelColW = layout.width;
-        }
-        float colGap = 8f;
-        float valueColX = PAD + labelColW + colGap;
-
-        // Measure value column width (superscript-aware).
-        float valueColW = 0;
-        for (int i = 1; i < values.length; i++) {
-            if (values[i] == null)
-                continue;
-            float w = measureValue(values[i]);
-            if (w > valueColW)
-                valueColW = w;
+        if (sections.isEmpty()) {
+            return;
         }
 
-        // Title width.
-        layout.setText(font, labels[0]);
-        float titleW = layout.width;
-
-        float boxW = Math.max(titleW, valueColX + valueColW) + PAD * 2;
-        float boxH = PAD * 2;
-        for (String line : lines) {
-            boxH += LOCK_RELATION_MARKER.equals(line) ? LOCK_RELATION_GAP : LINE_H;
-        }
-
-        // Position tooltip: offset from cursor, clamped to screen.
-        float tx = mouseX + 14;
-        float ty = mouseYFlipped + 14;
-        if (tx + boxW > screenWidth - 4)
-            tx = mouseX - boxW - 8;
-        if (ty + boxH > screenHeight - 4)
-            ty = mouseYFlipped - boxH - 8;
+        TooltipLayout tooltipLayout = createTooltipLayout(tooltipContent.title, sections, mouseX, mouseYFlipped,
+                screenWidth, screenHeight);
 
         // Draw background.
         batch.end();
         Gdx.gl.glEnable(com.badlogic.gdx.graphics.GL20.GL_BLEND);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         shapeRenderer.setColor(lockedTargetHovered ? LOCKED_BG_COLOR : BG_COLOR);
-        shapeRenderer.rect(tx, ty, boxW, boxH);
+        shapeRenderer.rect(tooltipLayout.x, tooltipLayout.y, tooltipLayout.width, tooltipLayout.height);
         shapeRenderer.end();
         batch.begin();
 
-        // Draw text rows.
-        float lineY = ty + boxH - PAD - LINE_H * 0.1f;
-        for (int i = 0; i < lines.length; i++) {
-            if (LOCK_RELATION_MARKER.equals(labels[i])) {
-                lineY -= LOCK_RELATION_GAP;
-                continue;
-            }
-            if (values[i] == null) {
-                // Title or full-width row.
-                font.setColor(i == 0 ? (lockedTargetHovered ? LOCKED_TITLE_COLOR : TITLE_COLOR) : TEXT_COLOR);
-                font.draw(batch, labels[i], tx + PAD, lineY);
-            } else {
-                font.setColor(isLockRelationLabel(labels[i]) ? LOCKED_TITLE_COLOR : TEXT_COLOR);
-                font.draw(batch, labels[i], tx + PAD, lineY);
-                drawValue(batch, values[i], tx + PAD + labelColW + colGap, lineY);
-            }
-            lineY -= LINE_H;
+        font.setColor(lockedTargetHovered ? LOCKED_TITLE_COLOR : TITLE_COLOR);
+        font.draw(batch, tooltipLayout.title, tooltipLayout.x + PAD, tooltipLayout.titleY);
+        for (TooltipSection section : tooltipLayout.sections) {
+            drawTooltipSection(batch, section);
         }
     }
 
@@ -181,7 +135,7 @@ public class BodyTooltip {
     // -------------------------------------------------------------------------
 
     private SimObject findHovered(int mouseX, int mouseYFlipped, List<SimObject> objects) {
-        boolean freeCam = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+        boolean freeCam = camera.getMode() == CameraMode.FREE_CAM;
         if (freeCam) {
             return findHovered3D(mouseX, mouseYFlipped, objects);
         }
@@ -275,16 +229,17 @@ public class BodyTooltip {
         return false;
     }
 
-    private String[] buildLines(SimObject obj, boolean lockedTarget) {
+    private TooltipContent buildTooltipContent(SimObject obj, boolean lockedTarget, boolean advancedOnly,
+            boolean showAdvancedInline) {
         if (obj instanceof CelestialBody cb) {
             String typeName = cb.bodyType == null ? "Body" : humanizeEnumLabel(cb.bodyType.name());
             double speedKms = cb.speed() / 1000.0;
 
             // Collect direct moons (bodies whose parent == this body).
             java.util.List<String> moonNames = new java.util.ArrayList<>();
-            for (var o : physics.getObjects()) {
+            for (var o : universe.getSimObjects()) {
                 if (o instanceof CelestialBody m && m.active
-                        && m.bodyType == CelestialBody.BodyType.MOON
+                        && m.bodyType == BodyType.MOON
                         && m.parent == cb) {
                     moonNames.add(m.name);
                 }
@@ -295,74 +250,100 @@ public class BodyTooltip {
             while (star.parent != null)
                 star = star.parent;
 
-            java.util.List<String> lines = new java.util.ArrayList<>();
-            lines.add(formatTitle(cb.name, typeName, lockedTarget));
-            lines.add("Mass\t" + formatSci(cb.mass) + " kg");
-            lines.add("Radius\t" + String.format("%.0f km", cb.radius / 1000.0));
+            java.util.List<String> primaryLines = new java.util.ArrayList<>();
+            java.util.List<String> advancedLines = new java.util.ArrayList<>();
+            if (!advancedOnly) {
+                primaryLines.add("Mass\t" + formatSci(cb.mass) + " kg");
+                primaryLines.add("Radius\t" + String.format("%.0f km", cb.radius / 1000.0));
 
-            // Distance from parent star (skip for the star itself).
-            if (cb != star) {
-                double dx = cb.x - star.x, dy = cb.y - star.y, dz = cb.z - star.z;
-                double distM = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                lines.add("Dist.Star\t" + FormatUtils.formatDistance(distM));
-            } else {
-                // Star: show barycentric drift from origin in adaptive SI units.
-                double driftM = Math.sqrt(cb.x * cb.x + cb.y * cb.y + cb.z * cb.z);
-                lines.add("Drift\t" + FormatUtils.formatDistance(driftM));
-            }
-
-            lines.add("Speed\t" + String.format("%.2f km/s", speedKms));
-
-            // Orbital period from vis-viva (osculant semi-major axis).
-            if (cb.parent != null && cb.semiMajorAxis > 0) {
-                double G = 6.674e-11;
-                double dx = cb.x - cb.parent.x, dy = cb.y - cb.parent.y, dz = cb.z - cb.parent.z;
-                double r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                double dvx = cb.vx - cb.parent.vx, dvy = cb.vy - cb.parent.vy, dvz = cb.vz - cb.parent.vz;
-                double v2 = dvx * dvx + dvy * dvy + dvz * dvz;
-                double mu = G * cb.parent.mass;
-                double a_osc = 1.0 / (2.0 / r - v2 / mu); // vis-viva for a
-                if (a_osc > 0) {
-                    double T_sec = 2.0 * Math.PI * Math.sqrt(a_osc * a_osc * a_osc / mu);
-                    lines.add("Orb.Period\t" + formatPeriod(T_sec));
+                // Distance from parent star (skip for the star itself).
+                if (cb != star) {
+                    double dx = cb.x - star.x, dy = cb.y - star.y, dz = cb.z - star.z;
+                    double distM = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    primaryLines.add("Dist.Star\t" + FormatUtils.formatDistance(distM));
+                } else {
+                    // Star: show barycentric drift from origin in adaptive SI units.
+                    double driftM = Math.sqrt(cb.x * cb.x + cb.y * cb.y + cb.z * cb.z);
+                    primaryLines.add("Drift\t" + FormatUtils.formatDistance(driftM));
                 }
-                lines.add("Orb.Incl.\t" + formatDegrees(cb.inclination));
-            }
 
-            // Rotation: equatorial surface speed + direction.
-            if (cb.rotationPeriod != 0) {
-                double absPeriod = Math.abs(cb.rotationPeriod);
-                double circumference = 2.0 * Math.PI * cb.radius; // metres
-                double eqSpeedKmh = (circumference / absPeriod) * 3.6; // m/s → km/h
-                double degPerHour = 360.0 / (absPeriod / 3600.0); // °/h
-                boolean retrograde = cb.rotationPeriod < 0;
-                String dir = retrograde ? "CW" : "CCW";
-                lines.add("Rotation\t" + String.format("%.1f km/h (%.2f°/h) %s", eqSpeedKmh, degPerHour, dir));
-                lines.add("Rot.Period\t" + formatPeriod(absPeriod));
-                lines.add("Tilt\t" + formatDegrees(cb.obliquity));
-            }
+                primaryLines.add("Speed\t" + String.format("%.2f km/s", speedKms));
 
-            if (!moonNames.isEmpty()) {
-                StringBuilder sb = new StringBuilder();
-                int show = Math.min(2, moonNames.size());
-                for (int i = 0; i < show; i++) {
-                    if (i > 0)
-                        sb.append(", ");
-                    sb.append(moonNames.get(i));
+                // Orbital period from vis-viva (osculant semi-major axis).
+                if (cb.parent != null && cb.semiMajorAxis > 0) {
+                    double G = 6.674e-11;
+                    double dx = cb.x - cb.parent.x, dy = cb.y - cb.parent.y, dz = cb.z - cb.parent.z;
+                    double r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    double dvx = cb.vx - cb.parent.vx, dvy = cb.vy - cb.parent.vy, dvz = cb.vz - cb.parent.vz;
+                    double v2 = dvx * dvx + dvy * dvy + dvz * dvz;
+                    double mu = G * (cb.parent.mass + cb.mass);
+                    double a_osc = 1.0 / (2.0 / r - v2 / mu); // vis-viva for a
+                    if (a_osc > 0) {
+                        double T_sec = 2.0 * Math.PI * Math.sqrt(a_osc * a_osc * a_osc / mu);
+                        primaryLines.add("Orb.Period\t" + formatPeriod(T_sec));
+                    }
+                    primaryLines.add("Orb.Incl.\t" + formatDegrees(cb.getOrbitInclination()));
                 }
-                if (moonNames.size() > 2)
-                    sb.append(" +").append(moonNames.size() - 2).append(" more");
-                lines.add("Moons\t" + sb);
+
+                // Rotation: equatorial surface speed + direction.
+                double rotationPeriod = cb.getRotationPeriod();
+                if (rotationPeriod != 0) {
+                    double absPeriod = Math.abs(rotationPeriod);
+                    double circumference = 2.0 * Math.PI * cb.radius; // metres
+                    double eqSpeedKmh = (circumference / absPeriod) * 3.6; // m/s → km/h
+                    double degPerHour = 360.0 / (absPeriod / 3600.0); // °/h
+                    boolean retrograde = rotationPeriod < 0;
+                    String dir = retrograde ? "CW" : "CCW";
+                    primaryLines
+                            .add("Rotation\t" + String.format("%.1f km/h (%.2f°/h) %s", eqSpeedKmh, degPerHour, dir));
+                    primaryLines.add("Rot.Period\t" + formatPeriod(absPeriod));
+                    primaryLines.add("Tilt\t" + formatDegrees(cb.getObliquity()));
+                }
+
+                if (!moonNames.isEmpty()) {
+                    StringBuilder sb = new StringBuilder();
+                    int show = Math.min(2, moonNames.size());
+                    for (int i = 0; i < show; i++) {
+                        if (i > 0)
+                            sb.append(", ");
+                        sb.append(moonNames.get(i));
+                    }
+                    if (moonNames.size() > 2)
+                        sb.append(" +").append(moonNames.size() - 2).append(" more");
+                    primaryLines.add("Moons\t" + sb);
+                }
+                appendLockedBodyRelationLines(primaryLines, cb);
             }
-            appendLockedBodyRelationLines(lines, cb);
-            return lines.toArray(new String[0]);
+
+            if (advancedOnly || showAdvancedInline) {
+                int detailCountBefore = advancedLines.size();
+                appendSpinDiagnosticsLines(advancedLines, cb);
+                if (advancedOnly && advancedLines.size() == detailCountBefore) {
+                    advancedLines.add("No advanced dynamics data");
+                }
+            }
+
+            String title = formatTitle(cb.name, typeName, lockedTarget);
+            java.util.List<String[]> sections = new ArrayList<>();
+            if (advancedOnly) {
+                sections.add(advancedLines.toArray(new String[0]));
+                return new TooltipContent(title, sections);
+            }
+            if (!primaryLines.isEmpty()) {
+                sections.add(primaryLines.toArray(new String[0]));
+            }
+            if (!advancedLines.isEmpty()) {
+                sections.add(advancedLines.toArray(new String[0]));
+            }
+            return new TooltipContent(title, sections);
         }
 
         java.util.List<String> lines = new java.util.ArrayList<>();
-        lines.add(lockedTarget ? obj.name + "  [LOCK]" : obj.name);
         lines.add("Speed\t" + String.format("%.2f km/s", obj.speed() / 1000.0));
         appendLockedBodyRelationLines(lines, obj);
-        return lines.toArray(new String[0]);
+        java.util.List<String[]> sections = new ArrayList<>();
+        sections.add(lines.toArray(new String[0]));
+        return new TooltipContent(lockedTarget ? obj.name + "  [LOCK]" : obj.name, sections);
     }
 
     private void appendLockedBodyRelationLines(java.util.List<String> lines, SimObject hoveredObject) {
@@ -371,9 +352,102 @@ public class BodyTooltip {
             return;
         }
 
-        lines.add(LOCK_RELATION_MARKER);
+        lines.add(SECTION_GAP_MARKER);
         lines.add("Lock dist\t" + FormatUtils.formatDistance(hoveredObject.distanceTo(lockedBody)));
         lines.add("Lock dV\t" + formatRelativeSpeed(hoveredObject, lockedBody));
+    }
+
+    private void appendSpinDiagnosticsLines(java.util.List<String> lines, CelestialBody body) {
+        if (physics.getPhysicsSettings().getSpinMode() != SpinMode.DYNAMIC) {
+            return;
+        }
+
+        boolean showTidalState = physics.getPhysicsSettings().isTidalDynamicsEnabled()
+                && body.hasTidalResponse();
+        boolean showFaceLockState = physics.getPhysicsSettings().isFaceLockDynamicsEnabled()
+                && body.parent != null;
+        if (!showTidalState && !showFaceLockState) {
+            return;
+        }
+
+        boolean needsSectionGap = lines.size() > 1;
+
+        if (showTidalState) {
+            if (needsSectionGap) {
+                lines.add(SECTION_GAP_MARKER);
+            }
+            lines.add("Tidal src\t" + body.tidalSpinState.contributorCount);
+            lines.add("Tidal acc.\t" + formatAngularAcceleration(body.tidalSpinState.alphaMagnitude));
+            if (body.tidalSpinState.primaryContributor != null) {
+                lines.add("Tide #1\t" + body.tidalSpinState.primaryContributor + " ("
+                        + formatAngularAcceleration(body.tidalSpinState.primaryMagnitude) + ")");
+            }
+            if (body.tidalSpinState.secondaryContributor != null) {
+                lines.add("Tide #2\t" + body.tidalSpinState.secondaryContributor + " ("
+                        + formatAngularAcceleration(body.tidalSpinState.secondaryMagnitude) + ")");
+            }
+            needsSectionGap = true;
+        }
+
+        if (showFaceLockState) {
+            var faceLockState = body.faceLockState;
+            boolean showLockedMetrics = shouldShowFaceLockLockedMetrics(faceLockState);
+            boolean showAcquisitionMetrics = shouldShowFaceLockAcquisitionMetrics(faceLockState);
+            double syncReferenceRate = showLockedMetrics
+                    ? faceLockState.orbitalRate
+                    : faceLockState.gateOrbitalRate;
+
+            if (needsSectionGap) {
+                lines.add(SECTION_GAP_MARKER);
+            }
+            lines.add("Face lock\t" + formatFaceLockStatus(faceLockState.status));
+            if (faceLockState.target != null) {
+                lines.add("Lock tgt\t" + faceLockState.target);
+            }
+
+            if (showLockedMetrics) {
+                lines.add("Phase err\t" + formatSignedDegrees(faceLockState.phaseError));
+                lines.add("Lock acc\t" + formatAngularAcceleration(faceLockState.axialAcceleration));
+                lines.add("Sync err\t" + formatAngularVelocity(faceLockState.rateError)
+                        + " (" + formatRateFraction(faceLockState.rateError, syncReferenceRate) + ")");
+            }
+
+            if (showAcquisitionMetrics) {
+                lines.add("Sync err\t" + formatAngularVelocity(faceLockState.gateRateError)
+                        + " (" + formatRateFraction(faceLockState.gateRateError, syncReferenceRate)
+                        + ")");
+            }
+
+            if (showLockedMetrics || showAcquisitionMetrics) {
+                lines.add("Sync tol\t"
+                        + formatRateFraction(faceLockState.syncTolerance, syncReferenceRate));
+            }
+        }
+    }
+
+    private boolean shouldShowFaceLockLockedMetrics(
+            com.gravitas.entities.bodies.celestial_body.runtime.FaceLockState faceLockState) {
+        if (faceLockState == null || !faceLockState.engaged) {
+            return false;
+        }
+
+        if (faceLockState.status == null) {
+            return true;
+        }
+
+        return switch (faceLockState.status) {
+            case "ACTIVE", "ALIGNED", "NO_SPRING", "INVALID" -> true;
+            default -> false;
+        };
+    }
+
+    private boolean shouldShowFaceLockAcquisitionMetrics(
+            com.gravitas.entities.bodies.celestial_body.runtime.FaceLockState faceLockState) {
+        if (faceLockState == null) {
+            return false;
+        }
+
+        return !shouldShowFaceLockLockedMetrics(faceLockState);
     }
 
     private boolean isLockRelationLabel(String label) {
@@ -417,6 +491,14 @@ public class BodyTooltip {
         return String.format("%.3f\u00d710^%d", mantissa, exp);
     }
 
+    private String formatAngularAcceleration(double value) {
+        return formatSci(value) + " rad/s^2";
+    }
+
+    private String formatAngularVelocity(double value) {
+        return formatSci(value) + " rad/s";
+    }
+
     private String formatPeriod(double seconds) {
         double absSeconds = Math.abs(seconds);
         double days = absSeconds / 86400.0;
@@ -431,6 +513,35 @@ public class BodyTooltip {
 
     private String formatDegrees(double radians) {
         return String.format("%.2f°", Math.toDegrees(radians));
+    }
+
+    private String formatSignedDegrees(double radians) {
+        return String.format("%+.2f°", Math.toDegrees(radians));
+    }
+
+    private String formatRateFraction(double value, double reference) {
+        if (!Double.isFinite(value) || !Double.isFinite(reference) || Math.abs(reference) <= 1e-18) {
+            return "n/a";
+        }
+        return String.format("%.2f%%", Math.abs(value / reference) * 100.0);
+    }
+
+    private String formatFaceLockStatus(String status) {
+        if (status == null || status.isEmpty()) {
+            return "n/a";
+        }
+        return switch (status) {
+            case "ACTIVE" -> "ACTIVE";
+            case "ALIGNED" -> "ALIGNED";
+            case "RELEASED" -> "RELEASED";
+            case "OUT_OF_SYNC" -> "OUT OF SYNC";
+            case "NO_PARENT" -> "NO PARENT";
+            case "NO_RATE" -> "NO RATE";
+            case "NO_TARGET" -> "NO TARGET";
+            case "NO_SPRING" -> "NO SPRING";
+            case "INVALID" -> "INVALID";
+            default -> status;
+        };
     }
 
     private String formatRelativeSpeed(SimObject object, SimObject reference) {
@@ -471,6 +582,161 @@ public class BodyTooltip {
         layout.setText(font, suffix);
         w += layout.width;
         return w;
+    }
+
+    private TooltipSection createTooltipSection(String[] lines) {
+        if (lines == null || lines.length == 0) {
+            return null;
+        }
+
+        String[] labels = new String[lines.length];
+        String[] values = new String[lines.length];
+        for (int i = 0; i < lines.length; i++) {
+            if (SECTION_GAP_MARKER.equals(lines[i])) {
+                labels[i] = SECTION_GAP_MARKER;
+                values[i] = null;
+                continue;
+            }
+            int tab = lines[i].indexOf('\t');
+            if (tab >= 0) {
+                labels[i] = lines[i].substring(0, tab);
+                values[i] = lines[i].substring(tab + 1);
+            } else {
+                labels[i] = lines[i];
+                values[i] = null;
+            }
+        }
+
+        float labelColumnWidth = 0f;
+        float fullWidthRowWidth = 0f;
+        for (int i = 0; i < labels.length; i++) {
+            if (SECTION_GAP_MARKER.equals(labels[i])) {
+                continue;
+            }
+            if (values[i] == null) {
+                layout.setText(font, labels[i]);
+                if (layout.width > fullWidthRowWidth) {
+                    fullWidthRowWidth = layout.width;
+                }
+            } else {
+                layout.setText(font, labels[i]);
+                if (layout.width > labelColumnWidth) {
+                    labelColumnWidth = layout.width;
+                }
+            }
+        }
+
+        float columnGap = 8f;
+        float valueColumnWidth = 0f;
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == null) {
+                continue;
+            }
+            float width = measureValue(values[i]);
+            if (width > valueColumnWidth) {
+                valueColumnWidth = width;
+            }
+        }
+
+        float width = fullWidthRowWidth;
+        if (labelColumnWidth > 0f) {
+            width = Math.max(width, labelColumnWidth + columnGap + valueColumnWidth);
+        }
+
+        float height = 0f;
+        for (String line : lines) {
+            height += SECTION_GAP_MARKER.equals(line) ? LOCK_RELATION_GAP : LINE_H;
+        }
+
+        return new TooltipSection(lines, labels, values, width, height, labelColumnWidth, columnGap);
+    }
+
+    private TooltipLayout createTooltipLayout(String title, List<TooltipSection> sections, int mouseX,
+            int mouseYFlipped, int screenWidth, int screenHeight) {
+        layout.setText(font, title);
+        float titleWidth = layout.width;
+
+        float contentWidth = 0f;
+        float contentHeight = 0f;
+        if (TOOLTIP_LAYOUT_MODE == TooltipLayoutMode.HORIZONTAL) {
+            for (int i = 0; i < sections.size(); i++) {
+                TooltipSection section = sections.get(i);
+                contentWidth += section.width;
+                if (i > 0) {
+                    contentWidth += SECTION_LAYOUT_GAP;
+                }
+                contentHeight = Math.max(contentHeight, section.height);
+            }
+        } else {
+            for (int i = 0; i < sections.size(); i++) {
+                TooltipSection section = sections.get(i);
+                contentWidth = Math.max(contentWidth, section.width);
+                contentHeight += section.height;
+                if (i > 0) {
+                    contentHeight += SECTION_LAYOUT_GAP;
+                }
+            }
+        }
+
+        float combinedWidth = Math.max(titleWidth, contentWidth) + PAD * 2;
+        float combinedHeight = PAD * 2 + LINE_H + (contentHeight > 0f ? TITLE_CONTENT_GAP + contentHeight : 0f);
+
+        float originX = mouseX + 14;
+        float originY = mouseYFlipped + 14;
+        if (originX + combinedWidth > screenWidth - 4) {
+            originX = mouseX - combinedWidth - 8;
+        }
+        if (originY + combinedHeight > screenHeight - 4) {
+            originY = mouseYFlipped - combinedHeight - 8;
+        }
+        if (originX < 4f) {
+            originX = 4f;
+        }
+        if (originY < 4f) {
+            originY = 4f;
+        }
+
+        float contentX = originX + PAD;
+        float titleY = originY + combinedHeight - PAD - LINE_H * 0.1f;
+        float contentTopY = titleY - LINE_H - TITLE_CONTENT_GAP;
+
+        if (TOOLTIP_LAYOUT_MODE == TooltipLayoutMode.HORIZONTAL) {
+            float sectionX = contentX;
+            for (TooltipSection section : sections) {
+                section.x = sectionX;
+                section.startY = contentTopY;
+                sectionX += section.width + SECTION_LAYOUT_GAP;
+            }
+        } else {
+            float sectionY = contentTopY;
+            for (TooltipSection section : sections) {
+                section.x = contentX;
+                section.startY = sectionY;
+                sectionY -= section.height + SECTION_LAYOUT_GAP;
+            }
+        }
+
+        return new TooltipLayout(title, sections, originX, originY, combinedWidth, combinedHeight, titleY);
+    }
+
+    private void drawTooltipSection(SpriteBatch batch, TooltipSection tooltipSection) {
+        float lineY = tooltipSection.startY;
+        for (int i = 0; i < tooltipSection.lines.length; i++) {
+            if (SECTION_GAP_MARKER.equals(tooltipSection.labels[i])) {
+                lineY -= LOCK_RELATION_GAP;
+                continue;
+            }
+            if (tooltipSection.values[i] == null) {
+                font.setColor(TEXT_COLOR);
+                font.draw(batch, tooltipSection.labels[i], tooltipSection.x, lineY);
+            } else {
+                font.setColor(isLockRelationLabel(tooltipSection.labels[i]) ? LOCKED_TITLE_COLOR : TEXT_COLOR);
+                font.draw(batch, tooltipSection.labels[i], tooltipSection.x, lineY);
+                drawValue(batch, tooltipSection.values[i],
+                        tooltipSection.x + tooltipSection.labelColumnWidth + tooltipSection.columnGap, lineY);
+            }
+            lineY -= LINE_H;
+        }
     }
 
     /**
@@ -518,15 +784,12 @@ public class BodyTooltip {
         double mx = worldPos[0];
         double my = worldPos[1];
 
-        for (Belt belt : belts) {
+        for (var belt : universe.getBelts()) {
             // Find parent body position.
             double px = 0, py = 0;
-            for (SimObject obj : physics.getObjects()) {
-                if (obj.name.equals(belt.parentName)) {
-                    px = obj.x;
-                    py = obj.y;
-                    break;
-                }
+            if (belt.parent != null) {
+                px = belt.parent.x;
+                py = belt.parent.y;
             }
             double dx = mx - px;
             double dy = my - py;
@@ -556,5 +819,64 @@ public class BodyTooltip {
                 "Outer edge\t" + String.format("%.2f AU", outerAU),
                 "Width\t" + String.format("%.2f AU", widthAU),
         };
+    }
+
+    private static final class TooltipContent {
+        private final String title;
+        private final List<String[]> sections;
+
+        private TooltipContent(String title, List<String[]> sections) {
+            this.title = title;
+            this.sections = sections;
+        }
+    }
+
+    private static final class TooltipLayout {
+        private final String title;
+        private final List<TooltipSection> sections;
+        private final float x;
+        private final float y;
+        private final float width;
+        private final float height;
+        private final float titleY;
+
+        private TooltipLayout(String title, List<TooltipSection> sections, float x,
+                float y, float width, float height, float titleY) {
+            this.title = title;
+            this.sections = sections;
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.titleY = titleY;
+        }
+    }
+
+    private static final class TooltipSection {
+        private final String[] lines;
+        private final String[] labels;
+        private final String[] values;
+        private final float width;
+        private final float height;
+        private final float labelColumnWidth;
+        private final float columnGap;
+        private float x;
+        private float startY;
+
+        private TooltipSection(String[] lines, String[] labels, String[] values, float width, float height,
+                float labelColumnWidth, float columnGap) {
+            this.lines = lines;
+            this.labels = labels;
+            this.values = values;
+            this.width = width;
+            this.height = height;
+            this.labelColumnWidth = labelColumnWidth;
+            this.columnGap = columnGap;
+        }
+    }
+
+    private enum TooltipLayoutMode {
+        VERTICAL,
+        HORIZONTAL
     }
 }

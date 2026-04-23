@@ -4,8 +4,11 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
+import com.gravitas.settings.CameraSettings;
+import com.gravitas.state.CameraState;
+import com.gravitas.util.GeometryUtils;
 
 /**
  * Manages the camera view of the simulation world.
@@ -21,35 +24,6 @@ import com.gravitas.entities.SimObject;
  * - Double-click on an object (handled externally): set as follow target.
  */
 public class WorldCamera {
-
-    public enum CameraMode {
-        TOP_VIEW, FREE_CAM
-    }
-
-    public enum FollowFrameMode {
-        FREE_ORBIT("Free Orbit"),
-        ORBIT_UPRIGHT("Orbit Upright"),
-        ORBIT_PLANE("Orbit Plane"),
-        ORBIT_AXIAL("Orbit Axial"),
-        ROTATION_AXIAL("Rotation Axial");
-
-        private final String hudLabel;
-
-        FollowFrameMode(String hudLabel) {
-            this.hudLabel = hudLabel;
-        }
-
-        public String hudLabel() {
-            return hudLabel;
-        }
-
-        public FollowFrameMode next() {
-            FollowFrameMode[] modes = values();
-            return modes[(ordinal() + 1) % modes.length];
-        }
-    }
-
-    private CameraMode mode = CameraMode.TOP_VIEW;
 
     /** Minimum meters per pixel (maximum zoom-in, ~1 km/px). */
     private static final float MIN_METERS_PER_PIXEL = 1e3f;
@@ -80,17 +54,13 @@ public class WorldCamera {
     // --- Shared state ---
 
     private final OrthographicCamera camera;
+    private final CameraSettings cameraSettings;
+    private final CameraState cameraState;
 
     /** Camera focus in world coordinates (SI meters, double). */
     private double focusX;
     private double focusY;
     private double focusZ;
-
-    /** If non-null, camera follows this object each frame. */
-    private SimObject followTarget;
-
-    /** FREE_CAM framing mode while following a target. */
-    private FollowFrameMode followFrameMode = FollowFrameMode.FREE_ORBIT;
 
     /** Target used to drive adaptive free-cam FOV even after unfollowing by pan. */
     private SimObject adaptiveFovTarget;
@@ -112,12 +82,6 @@ public class WorldCamera {
     /** Current FREE_CAM vertical field of view (degrees). */
     private float freeCamFov = FREE_CAM_FOV_WIDE;
 
-    /** True = adaptive cinematic/tele blend, false = fixed preset FOV. */
-    private boolean adaptiveFreeCamFovEnabled = true;
-
-    /** Selected fixed-FOV preset index for FREE_CAM. */
-    private int fixedFreeCamFovPresetIndex = 0;
-
     /** 1 / tan(vFOV / 2) — precomputed perspective scale factor. */
     private double fovScale;
 
@@ -135,9 +99,6 @@ public class WorldCamera {
     private float savedFreeCamAzimuth = azimuth;
     private float savedFreeCamElevation = elevation;
     private float savedFreeCamFov = FREE_CAM_FOV_WIDE;
-    private boolean savedAdaptiveFreeCamFovEnabled = true;
-    private int savedFixedFreeCamFovPresetIndex = 0;
-    private FollowFrameMode savedFollowFrameMode = followFrameMode;
     private float followFrameYawOffset = 0f;
     private float followFramePitchOffset = 0f;
     private float savedFollowFrameYawOffset = 0f;
@@ -170,7 +131,9 @@ public class WorldCamera {
     private final double[] scratchBodySpinAxis = new double[3];
     private final double[] scratchBodyGuideAxis = new double[3];
 
-    public WorldCamera(int viewportWidth, int viewportHeight) {
+    public WorldCamera(int viewportWidth, int viewportHeight, CameraSettings cameraSettings, CameraState cameraState) {
+        this.cameraSettings = cameraSettings;
+        this.cameraState = cameraState;
         camera = new OrthographicCamera();
         camera.setToOrtho(false, viewportWidth, viewportHeight);
         // Default: scale bar shows ~1.25 AU (inner solar system visible at startup)
@@ -188,13 +151,14 @@ public class WorldCamera {
     // -------------------------------------------------------------------------
 
     public void update(float dt) {
+        SimObject followTarget = getFollowTarget();
         if (followTarget != null) {
             focusX = followTarget.x;
             focusY = followTarget.y;
             focusZ = followTarget.z;
         }
 
-        if (mode == CameraMode.FREE_CAM) {
+        if (getMode() == CameraMode.FREE_CAM) {
             updateFreeCam(dt);
         } else {
             updateTopView(dt);
@@ -233,7 +197,7 @@ public class WorldCamera {
      * changes.
      */
     private void updateFreeCamFov(float dt) {
-        float desiredFov = adaptiveFreeCamFovEnabled ? computeAdaptiveFreeCamFov() : getSelectedFixedFreeCamFov();
+        float desiredFov = isAdaptiveFreeCamFovEnabled() ? computeAdaptiveFreeCamFov() : getSelectedFixedFreeCamFov();
 
         float newFov = MathUtils.lerp(freeCamFov, desiredFov, Math.min(1f, FREE_CAM_FOV_LERP_SPEED * dt));
         if (Math.abs(newFov - desiredFov) < 0.02f) {
@@ -278,11 +242,12 @@ public class WorldCamera {
     }
 
     private float getSelectedFixedFreeCamFov() {
-        return FREE_CAM_FOV_FIXED_PRESETS[fixedFreeCamFovPresetIndex];
+        return FREE_CAM_FOV_FIXED_PRESETS[cameraSettings.getFixedFreeCamFovPresetIndex()];
     }
 
     private void setFreeCamFov(float fovDegrees) {
         freeCamFov = MathUtils.clamp(fovDegrees, FREE_CAM_FOV_TELE, FREE_CAM_FOV_WIDE);
+        cameraState.setCurrentFreeCamFov(freeCamFov);
         fovScale = 1.0 / Math.tan(Math.toRadians(freeCamFov * 0.5));
     }
 
@@ -343,8 +308,9 @@ public class WorldCamera {
         camPosZ = focusZ - orbitDist * camFwdZ;
 
         // Build view matrix: camera at origin, axes = right/up/-fwd.
-        // Objects will be positioned camera-relative (floating origin) via
-        // buildModelMatrix(), so the view matrix has no translation component.
+        // Objects will be positioned camera-relative (floating origin) via the
+        // oriented/axis-frame model-matrix helpers, so the view matrix has no
+        // translation component.
         float[] vm = viewMatrix.val;
         vm[Matrix4.M00] = (float) camRightX;
         vm[Matrix4.M01] = (float) camRightY;
@@ -381,7 +347,7 @@ public class WorldCamera {
      * @param amount  scroll amount: negative = zoom in, positive = zoom out
      */
     public void onScroll(float screenX, float screenY, float amount) {
-        if (mode == CameraMode.FREE_CAM) {
+        if (getMode() == CameraMode.FREE_CAM) {
             dollyFreeCam(amount, 0.15f);
         } else {
             zoomTopViewTowardCursor(screenX, screenY, amount, 0.15f);
@@ -405,7 +371,7 @@ public class WorldCamera {
         float dx = screenX - lastPanX;
         float dy = sy - lastPanY;
 
-        if (mode == CameraMode.FREE_CAM) {
+        if (getMode() == CameraMode.FREE_CAM) {
             panFreeCamByPixels(dx, dy);
         } else {
             panTopViewByPixels(dx, dy);
@@ -499,10 +465,11 @@ public class WorldCamera {
      * result changes with dolly/FOV and matches body sizing math.
      */
     public double hudScaleBarWorldLength(float screenPixels) {
-        if (mode != CameraMode.FREE_CAM) {
+        if (getMode() != CameraMode.FREE_CAM) {
             return screenPixels * metersPerPixel;
         }
 
+        SimObject followTarget = getFollowTarget();
         if (followTarget != null && followTarget.active && followTarget.radius > 0.0) {
             double sphereRadius = screenToWorldSphereRadius(screenPixels * 0.5f,
                     followTarget.x,
@@ -550,7 +517,7 @@ public class WorldCamera {
     // -------------------------------------------------------------------------
 
     public void setFollowTarget(SimObject target) {
-        this.followTarget = target;
+        cameraState.setFollowTarget(target);
         this.adaptiveFovTarget = target;
         resetFollowFrameOffsets();
         if (target != null) {
@@ -571,20 +538,15 @@ public class WorldCamera {
         setFollowTarget(target);
 
         metersPerPixel = DEFAULT_METERS_PER_PIXEL;
-        savedAdaptiveFreeCamFovEnabled = true;
-        savedFixedFreeCamFovPresetIndex = 0;
-        savedFreeCamFov = FREE_CAM_FOV_WIDE;
         savedFreeCamAzimuth = DEFAULT_FREE_CAM_AZIMUTH;
         savedFreeCamElevation = DEFAULT_FREE_CAM_ELEVATION;
-        savedFollowFrameMode = followFrameMode;
+        savedFreeCamFov = freeCamFov;
         savedFollowFrameYawOffset = 0f;
         savedFollowFramePitchOffset = 0f;
         resetFollowFrameOffsets();
 
-        if (mode == CameraMode.FREE_CAM) {
-            adaptiveFreeCamFovEnabled = true;
-            fixedFreeCamFovPresetIndex = 0;
-            setFreeCamFov(FREE_CAM_FOV_WIDE);
+        if (getMode() == CameraMode.FREE_CAM) {
+            syncConfiguredFreeCamFov();
             azimuth = DEFAULT_FREE_CAM_AZIMUTH;
             elevation = DEFAULT_FREE_CAM_ELEVATION;
             orbitDist = clampOrbitDistance(orbitDistanceForFocusPlaneMetersPerPixel(DEFAULT_METERS_PER_PIXEL));
@@ -598,7 +560,7 @@ public class WorldCamera {
      * on screen. Never zooms out from the current scale.
      */
     public void startSmoothZoomTo(double bodyRadius) {
-        if (mode == CameraMode.FREE_CAM) {
+        if (getMode() == CameraMode.FREE_CAM) {
             startSmoothZoomToFreeCam(bodyRadius);
         } else {
             startSmoothZoomToTopView(bodyRadius);
@@ -625,47 +587,36 @@ public class WorldCamera {
     }
 
     public SimObject getFollowTarget() {
-        return followTarget;
+        return cameraState.getFollowTarget();
     }
 
     public FollowFrameMode getFollowFrameMode() {
-        return followFrameMode;
+        return cameraSettings.getFollowFrameMode();
     }
 
     public void cycleFollowFrameMode() {
-        followFrameMode = followFrameMode.next();
+        cameraSettings.cycleFollowFrameMode();
 
-        if (followFrameMode != FollowFrameMode.FREE_ORBIT) {
+        if (getFollowFrameMode() != FollowFrameMode.FREE_ORBIT) {
             resetFollowFrameOffsets();
-            if (mode == CameraMode.FREE_CAM) {
+            if (getMode() == CameraMode.FREE_CAM) {
                 updateFreeCamAxes();
             }
         }
 
-        if (mode == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
+        if (getMode() == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
             rememberFreeCamState();
         }
     }
 
     public void clearFollow() {
-        followTarget = null;
+        cameraState.clearFollowTarget();
         adaptiveFovTarget = null;
     }
 
     public void cycleFreeCamFovMode() {
-        if (adaptiveFreeCamFovEnabled) {
-            adaptiveFreeCamFovEnabled = false;
-            fixedFreeCamFovPresetIndex = 0;
-            return;
-        }
-
-        if (fixedFreeCamFovPresetIndex < FREE_CAM_FOV_FIXED_PRESETS.length - 1) {
-            fixedFreeCamFovPresetIndex++;
-            return;
-        }
-
-        adaptiveFreeCamFovEnabled = true;
-        fixedFreeCamFovPresetIndex = 0;
+        cameraSettings.cycleFreeCamFovMode();
+        syncConfiguredFreeCamFov();
     }
 
     // -------------------------------------------------------------------------
@@ -679,14 +630,16 @@ public class WorldCamera {
         cameraModeTransitionActive = false;
         double desiredFocusPlaneMetersPerPixel = metersPerPixel;
 
-        mode = CameraMode.FREE_CAM;
+        cameraSettings.setCameraMode(CameraMode.FREE_CAM);
         orbitDist = orbitDistanceForFocusPlaneMetersPerPixel(desiredFocusPlaneMetersPerPixel);
 
         orbitDist = clampOrbitDistance(orbitDist);
+        SimObject followTarget = getFollowTarget();
         if (followTarget != null) {
             focusZ = followTarget.z;
         }
         targetOrbitDist = -1;
+        syncConfiguredFreeCamFov();
         updateFreeCamAxes();
     }
 
@@ -696,13 +649,13 @@ public class WorldCamera {
     }
 
     private void switchToTopView(boolean rememberCurrentFreeCamState) {
-        if (rememberCurrentFreeCamState && mode == CameraMode.FREE_CAM) {
+        if (rememberCurrentFreeCamState && getMode() == CameraMode.FREE_CAM) {
             rememberFreeCamState();
         }
         cameraModeTransitionActive = false;
         double desiredFocusPlaneMetersPerPixel = focusPlaneMetersPerPixel();
 
-        mode = CameraMode.TOP_VIEW;
+        cameraSettings.setCameraMode(CameraMode.TOP_VIEW);
 
         metersPerPixel = (float) desiredFocusPlaneMetersPerPixel;
 
@@ -711,30 +664,29 @@ public class WorldCamera {
     }
 
     public void switchToFreeCamSmooth() {
-        if (cameraModeTransitionActive || mode == CameraMode.FREE_CAM) {
+        if (cameraModeTransitionActive || getMode() == CameraMode.FREE_CAM) {
             return;
         }
 
-        mode = CameraMode.FREE_CAM;
-        adaptiveFreeCamFovEnabled = savedAdaptiveFreeCamFovEnabled;
-        fixedFreeCamFovPresetIndex = savedFixedFreeCamFovPresetIndex;
+        cameraSettings.setCameraMode(CameraMode.FREE_CAM);
         setFreeCamFov(savedFreeCamFov);
-        followFrameMode = savedFollowFrameMode;
         followFrameYawOffset = savedFollowFrameYawOffset;
         followFramePitchOffset = savedFollowFramePitchOffset;
         orbitDist = clampOrbitDistance(orbitDistanceForFocusPlaneMetersPerPixel(metersPerPixel));
         targetOrbitDist = -1;
         azimuth = 0f;
         elevation = TOP_VIEW_EQUIVALENT_ELEVATION;
+        SimObject followTarget = getFollowTarget();
         if (followTarget != null) {
             focusZ = followTarget.z;
         }
+        syncConfiguredFreeCamFov();
         updateFreeCamAxes();
         beginCameraModeTransition(savedFreeCamAzimuth, savedFreeCamElevation, CameraMode.FREE_CAM);
     }
 
     public void switchToTopViewSmooth() {
-        if (cameraModeTransitionActive || mode != CameraMode.FREE_CAM) {
+        if (cameraModeTransitionActive || getMode() != CameraMode.FREE_CAM) {
             return;
         }
 
@@ -744,7 +696,7 @@ public class WorldCamera {
 
     /** Apply orbit-drag deltas (FREE_CAM only). */
     public void onOrbitDrag(float deltaX, float deltaY) {
-        if (mode != CameraMode.FREE_CAM)
+        if (getMode() != CameraMode.FREE_CAM)
             return;
         rotateFreeCamBy(-deltaX * 0.005f, deltaY * 0.005f);
     }
@@ -770,11 +722,11 @@ public class WorldCamera {
     }
 
     public CameraMode getMode() {
-        return mode;
+        return cameraSettings.getCameraMode();
     }
 
     public void setMode(CameraMode mode) {
-        this.mode = mode;
+        cameraSettings.setCameraMode(mode);
     }
 
     public boolean isCameraModeTransitionActive() {
@@ -782,7 +734,7 @@ public class WorldCamera {
     }
 
     public boolean isAdaptiveFreeCamFovEnabled() {
-        return adaptiveFreeCamFovEnabled;
+        return cameraSettings.isAdaptiveFreeCamFovEnabled();
     }
 
     public float getFreeCamFov() {
@@ -811,20 +763,36 @@ public class WorldCamera {
     }
 
     /**
-     * Builds the pure body rotation matrix used by the textured sphere path.
+     * Builds the pure rigid-body orientation matrix from the body's material frame.
      * This excludes translation and scale so billboard effects can reuse the
      * exact same orientation convention as the mesh renderer.
      */
-    public void buildBodyRotationMatrix(Matrix4 out, CelestialBody body, double rotationAngle) {
+    public void buildBodyOrientationMatrix(Matrix4 out, CelestialBody body) {
+        body.getRightAxis(scratchRotatedVector);
+        computeBodySpinAxis(body, scratchBodySpinAxis);
+        body.getPrimeMeridianAxis(scratchBodyGuideAxis);
+
+        setBodyAxesMatrix(
+                out,
+                scratchRotatedVector[0], scratchRotatedVector[1], scratchRotatedVector[2],
+                scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
+                scratchBodyGuideAxis[0], scratchBodyGuideAxis[1], scratchBodyGuideAxis[2]);
+    }
+
+    /**
+     * Builds the pure body-axis frame matrix used by paths that intentionally
+     * exclude axial twist and only care about the current spin axis orientation.
+     */
+    public void buildBodyAxisFrameMatrix(Matrix4 out, CelestialBody body) {
         computeBodySpinAxis(body, scratchBodySpinAxis);
 
-        if (!projectOntoPlane(0.0, 0.0, 1.0,
+        if (!GeometryUtils.projectOntoPlane(0.0, 0.0, 1.0,
                 scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
                 scratchBodyGuideAxis)) {
-            if (!projectOntoPlane(1.0, 0.0, 0.0,
+            if (!GeometryUtils.projectOntoPlane(1.0, 0.0, 0.0,
                     scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
                     scratchBodyGuideAxis)
-                    && !projectOntoPlane(0.0, 1.0, 0.0,
+                    && !GeometryUtils.projectOntoPlane(0.0, 1.0, 0.0,
                             scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
                             scratchBodyGuideAxis)) {
                 scratchBodyGuideAxis[0] = 0.0;
@@ -833,22 +801,10 @@ public class WorldCamera {
             }
         }
 
-        rotateAroundAxis(
-                scratchBodyGuideAxis[0], scratchBodyGuideAxis[1], scratchBodyGuideAxis[2],
-                scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
-                (float) rotationAngle,
-                scratchRotatedVector);
-
-        double zAxisX = scratchRotatedVector[0];
-        double zAxisY = scratchRotatedVector[1];
-        double zAxisZ = scratchRotatedVector[2];
-        double zAxisLen = Math.sqrt(lengthSq(zAxisX, zAxisY, zAxisZ));
-        if (zAxisLen <= 1e-12) {
-            zAxisX = scratchBodyGuideAxis[0];
-            zAxisY = scratchBodyGuideAxis[1];
-            zAxisZ = scratchBodyGuideAxis[2];
-            zAxisLen = Math.sqrt(lengthSq(zAxisX, zAxisY, zAxisZ));
-        }
+        double zAxisX = scratchBodyGuideAxis[0];
+        double zAxisY = scratchBodyGuideAxis[1];
+        double zAxisZ = scratchBodyGuideAxis[2];
+        double zAxisLen = Math.sqrt(GeometryUtils.lengthSq(zAxisX, zAxisY, zAxisZ));
         zAxisX /= zAxisLen;
         zAxisY /= zAxisLen;
         zAxisZ /= zAxisLen;
@@ -856,7 +812,7 @@ public class WorldCamera {
         double xAxisX = scratchBodySpinAxis[1] * zAxisZ - scratchBodySpinAxis[2] * zAxisY;
         double xAxisY = scratchBodySpinAxis[2] * zAxisX - scratchBodySpinAxis[0] * zAxisZ;
         double xAxisZ = scratchBodySpinAxis[0] * zAxisY - scratchBodySpinAxis[1] * zAxisX;
-        double xAxisLen = Math.sqrt(lengthSq(xAxisX, xAxisY, xAxisZ));
+        double xAxisLen = Math.sqrt(GeometryUtils.lengthSq(xAxisX, xAxisY, xAxisZ));
         if (xAxisLen <= 1e-12) {
             xAxisX = 1.0;
             xAxisY = 0.0;
@@ -870,7 +826,7 @@ public class WorldCamera {
         zAxisX = xAxisY * scratchBodySpinAxis[2] - xAxisZ * scratchBodySpinAxis[1];
         zAxisY = xAxisZ * scratchBodySpinAxis[0] - xAxisX * scratchBodySpinAxis[2];
         zAxisZ = xAxisX * scratchBodySpinAxis[1] - xAxisY * scratchBodySpinAxis[0];
-        zAxisLen = Math.sqrt(lengthSq(zAxisX, zAxisY, zAxisZ));
+        zAxisLen = Math.sqrt(GeometryUtils.lengthSq(zAxisX, zAxisY, zAxisZ));
         if (zAxisLen <= 1e-12) {
             zAxisLen = 1.0;
         }
@@ -878,14 +834,31 @@ public class WorldCamera {
         zAxisY /= zAxisLen;
         zAxisZ /= zAxisLen;
 
+        setBodyAxesMatrix(
+                out,
+                xAxisX, xAxisY, xAxisZ,
+                scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
+                zAxisX, zAxisY, zAxisZ);
+    }
+
+    private void setBodyAxesMatrix(Matrix4 out,
+            double xAxisX,
+            double xAxisY,
+            double xAxisZ,
+            double yAxisX,
+            double yAxisY,
+            double yAxisZ,
+            double zAxisX,
+            double zAxisY,
+            double zAxisZ) {
         float[] m = out.val;
         m[Matrix4.M00] = (float) xAxisX;
         m[Matrix4.M10] = (float) xAxisY;
         m[Matrix4.M20] = (float) xAxisZ;
         m[Matrix4.M30] = 0f;
-        m[Matrix4.M01] = (float) scratchBodySpinAxis[0];
-        m[Matrix4.M11] = (float) scratchBodySpinAxis[1];
-        m[Matrix4.M21] = (float) scratchBodySpinAxis[2];
+        m[Matrix4.M01] = (float) yAxisX;
+        m[Matrix4.M11] = (float) yAxisY;
+        m[Matrix4.M21] = (float) yAxisZ;
         m[Matrix4.M31] = 0f;
         m[Matrix4.M02] = (float) zAxisX;
         m[Matrix4.M12] = (float) zAxisY;
@@ -905,83 +878,74 @@ public class WorldCamera {
      * Builds a model matrix that places an object at (wx, wy, wz) in world space,
      * applies floating-origin subtraction (camera position removed in double
      * precision before casting to float), scales by the given radius, and
-     * applies the resolved body spin axis plus axial rotation.
+     * applies the body's full material orientation.
      *
-     * @param out           the Matrix4 to fill (modified in place)
-     * @param wx            world X (meters, double)
-     * @param wy            world Y (meters, double)
-     * @param wz            world Z (meters, double)
-     * @param scale         uniform scale (typically body radius in meters)
-     * @param rotationAngle current axial spin angle in radians
+     * @param out   the Matrix4 to fill (modified in place)
+     * @param wx    world X (meters, double)
+     * @param wy    world Y (meters, double)
+     * @param wz    world Z (meters, double)
+     * @param scale uniform scale (typically body radius in meters)
      */
-    public void buildModelMatrix(Matrix4 out,
+    public void buildOrientedModelMatrix(Matrix4 out,
             double wx, double wy, double wz,
             double scale,
-            CelestialBody body,
-            double rotationAngle) {
-        // Floating origin: subtract camera position in double, then cast to float.
+            CelestialBody body) {
         float tx = (float) (wx - camPosX);
         float ty = (float) (wy - camPosY);
         float tz = (float) (wz - camPosZ);
 
         out.idt();
         out.translate(tx, ty, tz);
-        buildBodyRotationMatrix(followFrameBodyMatrix, body, rotationAngle);
+        buildBodyOrientationMatrix(followFrameBodyMatrix, body);
+        out.mul(followFrameBodyMatrix);
+        out.scale((float) scale, (float) scale, (float) scale);
+    }
+
+    /**
+     * Builds a model matrix aligned to the body's spin-axis frame but without
+     * applying its current axial twist.
+     */
+    public void buildAxisFrameModelMatrix(Matrix4 out,
+            double wx, double wy, double wz,
+            double scale,
+            CelestialBody body) {
+        float tx = (float) (wx - camPosX);
+        float ty = (float) (wy - camPosY);
+        float tz = (float) (wz - camPosZ);
+
+        out.idt();
+        out.translate(tx, ty, tz);
+        buildBodyAxisFrameMatrix(followFrameBodyMatrix, body);
         out.mul(followFrameBodyMatrix);
         out.scale((float) scale, (float) scale, (float) scale);
     }
 
     private void computeBodySpinAxis(CelestialBody body, double[] out) {
-        double worldX = body.spinAxis.worldX;
-        double worldY = body.spinAxis.worldY;
-        double worldZ = body.spinAxis.worldZ;
-        double outLen = Math.sqrt(lengthSq(worldX, worldY, worldZ));
+        body.getSpinAxis(out);
+        double outLen = Math.sqrt(GeometryUtils.lengthSq(out[0], out[1], out[2]));
         if (outLen <= 1e-12) {
             computeReferenceOrbitalNormal(body, out);
             return;
         }
-        out[0] = worldX / outLen;
-        out[1] = worldY / outLen;
-        out[2] = worldZ / outLen;
+        out[0] /= outLen;
+        out[1] /= outLen;
+        out[2] /= outLen;
     }
 
     private void computeReferenceOrbitalNormal(CelestialBody body, double[] out) {
-        if (body.parent == null || body.semiMajorAxis <= 0.0) {
+        double worldX = body.orbitFrame.normalX;
+        double worldY = body.orbitFrame.normalY;
+        double worldZ = body.orbitFrame.normalZ;
+        double outLen = Math.sqrt(GeometryUtils.lengthSq(worldX, worldY, worldZ));
+        if (outLen <= 1e-12) {
             out[0] = 0.0;
             out[1] = 0.0;
             out[2] = 1.0;
             return;
         }
-
-        double sinInc = Math.sin(body.inclination);
-        double cosInc = Math.cos(body.inclination);
-        double sinOmega = Math.sin(body.longitudeOfAscendingNode);
-        double cosOmega = Math.cos(body.longitudeOfAscendingNode);
-
-        out[0] = sinInc * sinOmega;
-        out[1] = -sinInc * cosOmega;
-        out[2] = cosInc;
-    }
-
-    private boolean projectOntoPlane(double vx, double vy, double vz,
-            double nx, double ny, double nz,
-            double[] out) {
-        double nLenSq = lengthSq(nx, ny, nz);
-        if (nLenSq <= 1e-18) {
-            return false;
-        }
-        double dot = (vx * nx + vy * ny + vz * nz) / nLenSq;
-        out[0] = vx - dot * nx;
-        out[1] = vy - dot * ny;
-        out[2] = vz - dot * nz;
-        double outLen = Math.sqrt(lengthSq(out[0], out[1], out[2]));
-        if (outLen <= 1e-12) {
-            return false;
-        }
-        out[0] /= outLen;
-        out[1] /= outLen;
-        out[2] /= outLen;
-        return true;
+        out[0] = worldX / outLen;
+        out[1] = worldY / outLen;
+        out[2] = worldZ / outLen;
     }
 
     /** Camera position X in world space (double precision). */
@@ -1036,7 +1000,7 @@ public class WorldCamera {
         double wxAfter = (screenX - camera.viewportWidth * 0.5) * metersPerPixel + focusX;
         double wyAfter = (sy - camera.viewportHeight * 0.5) * metersPerPixel + focusY;
 
-        if (followTarget == null) {
+        if (getFollowTarget() == null) {
             focusX += wxBefore - wxAfter;
             focusY += wyBefore - wyAfter;
         }
@@ -1067,7 +1031,7 @@ public class WorldCamera {
     }
 
     private double focusPlaneMetersPerPixel() {
-        if (mode != CameraMode.FREE_CAM) {
+        if (getMode() != CameraMode.FREE_CAM) {
             return metersPerPixel;
         }
 
@@ -1109,14 +1073,12 @@ public class WorldCamera {
         savedFreeCamAzimuth = azimuth;
         savedFreeCamElevation = elevation;
         savedFreeCamFov = freeCamFov;
-        savedAdaptiveFreeCamFovEnabled = adaptiveFreeCamFovEnabled;
-        savedFixedFreeCamFovPresetIndex = fixedFreeCamFovPresetIndex;
-        savedFollowFrameMode = followFrameMode;
         savedFollowFrameYawOffset = followFrameYawOffset;
         savedFollowFramePitchOffset = followFramePitchOffset;
     }
 
     private double minOrbitDistanceForFollowTarget() {
+        SimObject followTarget = getFollowTarget();
         if (followTarget == null || !followTarget.active || followTarget.radius <= 0.0) {
             return MIN_ORBIT_DIST;
         }
@@ -1165,7 +1127,7 @@ public class WorldCamera {
             followFrameYawOffset += deltaAzimuth;
             float limit = (float) Math.toRadians(89);
             followFramePitchOffset = Math.max(-limit, Math.min(limit, followFramePitchOffset + deltaElevation));
-            if (mode == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
+            if (getMode() == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
                 rememberFreeCamState();
             }
             return;
@@ -1174,13 +1136,13 @@ public class WorldCamera {
         azimuth += deltaAzimuth;
         elevation += deltaElevation;
         clampElevation();
-        if (mode == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
+        if (getMode() == CameraMode.FREE_CAM && !cameraModeTransitionActive) {
             rememberFreeCamState();
         }
     }
 
     void clearFollowForManualNavigation() {
-        followTarget = null;
+        cameraState.clearFollowTarget();
     }
 
     void clampElevationInternal() {
@@ -1200,9 +1162,11 @@ public class WorldCamera {
     }
 
     private boolean shouldUseFollowFrame() {
+        FollowFrameMode followFrameMode = getFollowFrameMode();
         if (cameraModeTransitionActive || followFrameMode == FollowFrameMode.FREE_ORBIT) {
             return false;
         }
+        SimObject followTarget = getFollowTarget();
         if (!(followTarget instanceof CelestialBody body) || !body.active) {
             return false;
         }
@@ -1218,6 +1182,8 @@ public class WorldCamera {
             return false;
         }
 
+        SimObject followTarget = getFollowTarget();
+        FollowFrameMode followFrameMode = getFollowFrameMode();
         CelestialBody body = (CelestialBody) followTarget;
         double baseFwdX;
         double baseFwdY;
@@ -1255,7 +1221,7 @@ public class WorldCamera {
                 double crossX = baseFwdY * upRefZ - baseFwdZ * upRefY;
                 double crossY = baseFwdZ * upRefX - baseFwdX * upRefZ;
                 double crossZ = baseFwdX * upRefY - baseFwdY * upRefX;
-                if (lengthSq(crossX, crossY, crossZ) <= 1e-18) {
+                if (GeometryUtils.lengthSq(crossX, crossY, crossZ) <= 1e-18) {
                     computeReferenceOrbitalNormal(body, scratchBodyOrbitNormal);
                     upRefX = scratchBodyOrbitNormal[0];
                     upRefY = scratchBodyOrbitNormal[1];
@@ -1263,7 +1229,7 @@ public class WorldCamera {
                 }
             }
             case ROTATION_AXIAL -> {
-                buildBodyRotationMatrix(followFrameBodyMatrix, body, body.rotationAngle);
+                buildBodyOrientationMatrix(followFrameBodyMatrix, body);
                 float[] m = followFrameBodyMatrix.val;
                 baseFwdX = m[Matrix4.M02];
                 baseFwdY = m[Matrix4.M12];
@@ -1287,10 +1253,16 @@ public class WorldCamera {
         return true;
     }
 
+    private void syncConfiguredFreeCamFov() {
+        if (!isAdaptiveFreeCamFovEnabled()) {
+            setFreeCamFov(getSelectedFixedFreeCamFov());
+        }
+    }
+
     private boolean buildOffsetFrame(double baseFwdX, double baseFwdY, double baseFwdZ,
             double upRefX, double upRefY, double upRefZ,
             double[] outFwd, double[] outRight, double[] outUp) {
-        double baseFwdLen = Math.sqrt(lengthSq(baseFwdX, baseFwdY, baseFwdZ));
+        double baseFwdLen = Math.sqrt(GeometryUtils.lengthSq(baseFwdX, baseFwdY, baseFwdZ));
         if (baseFwdLen <= 1e-12) {
             return false;
         }
@@ -1299,7 +1271,7 @@ public class WorldCamera {
         baseFwdY /= baseFwdLen;
         baseFwdZ /= baseFwdLen;
 
-        double upRefLen = Math.sqrt(lengthSq(upRefX, upRefY, upRefZ));
+        double upRefLen = Math.sqrt(GeometryUtils.lengthSq(upRefX, upRefY, upRefZ));
         if (upRefLen <= 1e-12) {
             upRefX = 0.0;
             upRefY = 0.0;
@@ -1313,18 +1285,18 @@ public class WorldCamera {
         double baseRightX = baseFwdY * upRefZ - baseFwdZ * upRefY;
         double baseRightY = baseFwdZ * upRefX - baseFwdX * upRefZ;
         double baseRightZ = baseFwdX * upRefY - baseFwdY * upRefX;
-        if (lengthSq(baseRightX, baseRightY, baseRightZ) <= 1e-18) {
+        if (GeometryUtils.lengthSq(baseRightX, baseRightY, baseRightZ) <= 1e-18) {
             double fallbackUpX = Math.abs(baseFwdZ) < 0.95 ? 0.0 : 1.0;
             double fallbackUpY = 0.0;
             double fallbackUpZ = Math.abs(baseFwdZ) < 0.95 ? 1.0 : 0.0;
             baseRightX = baseFwdY * fallbackUpZ - baseFwdZ * fallbackUpY;
             baseRightY = baseFwdZ * fallbackUpX - baseFwdX * fallbackUpZ;
             baseRightZ = baseFwdX * fallbackUpY - baseFwdY * fallbackUpX;
-            if (lengthSq(baseRightX, baseRightY, baseRightZ) <= 1e-18) {
+            if (GeometryUtils.lengthSq(baseRightX, baseRightY, baseRightZ) <= 1e-18) {
                 return false;
             }
         }
-        double baseRightLen = Math.sqrt(lengthSq(baseRightX, baseRightY, baseRightZ));
+        double baseRightLen = Math.sqrt(GeometryUtils.lengthSq(baseRightX, baseRightY, baseRightZ));
         baseRightX /= baseRightLen;
         baseRightY /= baseRightLen;
         baseRightZ /= baseRightLen;
@@ -1332,7 +1304,7 @@ public class WorldCamera {
         double baseUpX = baseRightY * baseFwdZ - baseRightZ * baseFwdY;
         double baseUpY = baseRightZ * baseFwdX - baseRightX * baseFwdZ;
         double baseUpZ = baseRightX * baseFwdY - baseRightY * baseFwdX;
-        double baseUpLen = Math.sqrt(lengthSq(baseUpX, baseUpY, baseUpZ));
+        double baseUpLen = Math.sqrt(GeometryUtils.lengthSq(baseUpX, baseUpY, baseUpZ));
         if (baseUpLen <= 1e-12) {
             return false;
         }
@@ -1353,7 +1325,7 @@ public class WorldCamera {
         double rightX = fwdY * baseUpZ - fwdZ * baseUpY;
         double rightY = fwdZ * baseUpX - fwdX * baseUpZ;
         double rightZ = fwdX * baseUpY - fwdY * baseUpX;
-        double rightLen = Math.sqrt(lengthSq(rightX, rightY, rightZ));
+        double rightLen = Math.sqrt(GeometryUtils.lengthSq(rightX, rightY, rightZ));
         if (rightLen <= 1e-12) {
             rightX = baseRightX;
             rightY = baseRightY;
@@ -1371,7 +1343,7 @@ public class WorldCamera {
             fwdZ = scratchRotatedVector[2];
         }
 
-        double fwdLen = Math.sqrt(lengthSq(fwdX, fwdY, fwdZ));
+        double fwdLen = Math.sqrt(GeometryUtils.lengthSq(fwdX, fwdY, fwdZ));
         if (fwdLen <= 1e-12) {
             return false;
         }
@@ -1382,12 +1354,12 @@ public class WorldCamera {
         rightX = fwdY * baseUpZ - fwdZ * baseUpY;
         rightY = fwdZ * baseUpX - fwdX * baseUpZ;
         rightZ = fwdX * baseUpY - fwdY * baseUpX;
-        rightLen = Math.sqrt(lengthSq(rightX, rightY, rightZ));
+        rightLen = Math.sqrt(GeometryUtils.lengthSq(rightX, rightY, rightZ));
         if (rightLen <= 1e-12) {
             rightX = baseRightX;
             rightY = baseRightY;
             rightZ = baseRightZ;
-            rightLen = Math.sqrt(lengthSq(rightX, rightY, rightZ));
+            rightLen = Math.sqrt(GeometryUtils.lengthSq(rightX, rightY, rightZ));
             if (rightLen <= 1e-12) {
                 return false;
             }
@@ -1399,7 +1371,7 @@ public class WorldCamera {
         double upX = rightY * fwdZ - rightZ * fwdY;
         double upY = rightZ * fwdX - rightX * fwdZ;
         double upZ = rightX * fwdY - rightY * fwdX;
-        double upLen = Math.sqrt(lengthSq(upX, upY, upZ));
+        double upLen = Math.sqrt(GeometryUtils.lengthSq(upX, upY, upZ));
         if (upLen <= 1e-12) {
             return false;
         }
@@ -1420,10 +1392,6 @@ public class WorldCamera {
         azimuth = (float) Math.atan2(-camFwdX, camFwdY);
         elevation = (float) Math.asin(Math.max(-1.0, Math.min(1.0, -camFwdZ)));
         clampElevation();
-    }
-
-    private double lengthSq(double x, double y, double z) {
-        return x * x + y * y + z * z;
     }
 
     private void rotateAroundAxis(double vx, double vy, double vz,

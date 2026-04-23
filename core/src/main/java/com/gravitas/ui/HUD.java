@@ -8,21 +8,30 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
 import com.gravitas.physics.PhysicsEngine;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.settings.AppSettings;
+import com.gravitas.settings.CameraSettings;
+import com.gravitas.settings.OverlaySettings;
+import com.gravitas.state.AppState;
+import com.gravitas.state.CameraState;
+import com.gravitas.state.SettingsPanelState;
+import com.gravitas.state.SimulationState;
+import com.gravitas.state.UiState;
+import com.gravitas.ui.settings.SettingsPanelModel;
+import com.gravitas.ui.settings.WarpPresets;
 import com.gravitas.util.FormatUtils;
-
-import java.util.function.BooleanSupplier;
 
 /**
  * Heads-up display rendered in screen space over the simulation.
  *
- * Top-left : simulation time, time warp, pause indicator
+ * Top-left : simulation time, time warp, spin mode, pause indicator
  * Bottom-left: selected object details + scale bar
  * Top-right : controls legend (toggleable with H)
- * Bottom-right: mode indicators (V = visual scale, T = overlays, X = FX menu)
+ * Bottom-right: quick status indicators for the most useful runtime toggles
  */
 public class HUD {
 
@@ -40,6 +49,9 @@ public class HUD {
     private static final Color FOLLOW_PANEL_COLOR = new Color(0.05f, 0.08f, 0.12f, 0.72f);
     private static final Color FOLLOW_BADGE_COLOR = new Color(0.14f, 0.46f, 0.28f, 0.95f);
     private static final Color FOLLOW_BADGE_TEXT_COLOR = new Color(0.92f, 1.0f, 0.92f, 1f);
+    private static final Color SETTINGS_PANEL_COLOR = new Color(0.07f, 0.09f, 0.14f, 0.80f);
+    private static final Color SETTINGS_HINT_COLOR = new Color(0.67f, 0.71f, 0.77f, 0.96f);
+    private static final Color SETTINGS_OPTION_COLOR = new Color(0.82f, 0.84f, 0.88f, 0.96f);
 
     private static final float LEGEND_PAD = 10f;
     private static final Color PANEL_COLOR = new Color(0.04f, 0.04f, 0.08f, 0.50f);
@@ -51,26 +63,31 @@ public class HUD {
     private final BitmapFont font;
     private final PhysicsEngine physics;
     private final WorldCamera camera;
-    private final GravitasInputProcessor input;
+    private final CameraState cameraState;
+    private final CameraSettings cameraSettings;
+    private final SimulationState simulationState;
+    private final UiState uiState;
+    private final SettingsPanelModel settingsPanelModel;
+    private final OverlaySettings overlaySettings;
     private final ShapeRenderer shapeRenderer;
     private final OrthographicCamera screenCam = new OrthographicCamera();
     private final GlyphLayout layout = new GlyphLayout();
-    private BooleanSupplier mode3DSupplier = () -> true;
 
     private SimObject selectedObject;
-    private boolean showLegend = false;
 
     public HUD(FontManager fontManager, PhysicsEngine physics, WorldCamera camera,
-            GravitasInputProcessor input, ShapeRenderer shapeRenderer) {
+            ShapeRenderer shapeRenderer, AppSettings settings, AppState appState,
+            SettingsPanelModel settingsPanelModel) {
         this.font = fontManager.uiFont;
         this.physics = physics;
         this.camera = camera;
-        this.input = input;
+        this.cameraState = appState.getCamera();
+        this.cameraSettings = settings.getCameraSettings();
+        this.simulationState = appState.getSimulation();
+        this.uiState = appState.getUi();
+        this.settingsPanelModel = settingsPanelModel;
         this.shapeRenderer = shapeRenderer;
-    }
-
-    public void setMode3DSupplier(BooleanSupplier supplier) {
-        this.mode3DSupplier = supplier;
+        this.overlaySettings = settings.getOverlaySettings();
     }
 
     // -------------------------------------------------------------------------
@@ -86,7 +103,7 @@ public class HUD {
         y -= LINE_HEIGHT;
 
         // ---- Time warp / pause ----
-        if (input.isPaused()) {
+        if (simulationState.isPaused()) {
             font.setColor(PAUSED_COLOR);
             font.draw(batch, "PAUSED  (SPACE to resume)", MARGIN, y);
         } else {
@@ -94,6 +111,10 @@ public class HUD {
             font.setColor(WARP_COLOR);
             font.draw(batch, "WARP  " + formatWarp(warp), MARGIN, y);
         }
+        y -= LINE_HEIGHT;
+
+        font.setColor(DIM_COLOR);
+        font.draw(batch, "SPIN  " + physics.getPhysicsSettings().getSpinMode(), MARGIN, y);
         y -= LINE_HEIGHT * 1.5f;
 
         // ---- Follow target lock card ----
@@ -109,7 +130,7 @@ public class HUD {
             font.draw(batch, "Speed  " + String.format("%.3f km/s", selectedObject.speed() / 1000.0), MARGIN, y);
             y -= LINE_HEIGHT;
 
-            boolean showZ = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+            boolean showZ = cameraSettings.getCameraMode() == CameraMode.FREE_CAM;
             font.draw(batch,
                     "Pos    "
                             + formatPosition(selectedObject.x, selectedObject.y, showZ ? selectedObject.z : Double.NaN),
@@ -131,17 +152,17 @@ public class HUD {
         renderModeIndicators(batch, screenWidth);
 
         // ---- Controls legend (top-right) ----
-        if (showLegend) {
+        if (uiState.isLegendVisible()) {
             renderLegend(batch, screenWidth, screenHeight);
         }
 
-        if (input.isCelestialFxMenuOpen()) {
-            renderCelestialFxPopup(batch, screenWidth, screenHeight);
+        if (uiState.getSettingsPanel().isOpen()) {
+            renderSettingsPopup(batch, screenWidth, screenHeight);
         }
     }
 
     private float renderFollowTargetCard(SpriteBatch batch, int screenWidth, int screenHeight, float topY) {
-        SimObject followTarget = camera.getFollowTarget();
+        SimObject followTarget = cameraState.getFollowTarget();
         if (followTarget == null || !followTarget.active) {
             return topY;
         }
@@ -162,7 +183,7 @@ public class HUD {
             detailRows.add(relativeSpeedRow);
         }
 
-        detailRows.add(new String[] { "Mode", camera.getFollowFrameMode().hudLabel() });
+        detailRows.add(new String[] { "Mode", cameraSettings.getFollowFrameMode().hudLabel() });
 
         layout.setText(font, badge);
         float badgeW = layout.width + STATUS_PILL_PAD_X * 2f;
@@ -310,29 +331,22 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private void renderModeIndicators(SpriteBatch batch, int screenWidth) {
-        String dimText = "L: Orbits [" + (mode3DSupplier.getAsBoolean() ? "3D" : "2D") + "]";
-        String camText = "C: Camera [" + (camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? "3D" : "2D") + "]";
-        String fovText = camera.isAdaptiveFreeCamFovEnabled()
-                ? "Z: FOV [AUTO " + Math.round(camera.getFreeCamFov()) + "°]"
-                : "Z: FOV [FIX " + Math.round(camera.getSelectedFixedFreeCamFovPreset()) + "°]";
-        String ffText = "P: Follow [" + camera.getFollowFrameMode().hudLabel() + "]";
-        String vsText = "V: Visual Scale [" + (input.isVisualScaleMode() ? "ON" : "OFF") + "]";
-        String opText = "T: Overlays [" + input.getOverlayArtifactsMode().hudLabel() + "]";
-        String fxText = "X: FX Settings [" + (input.isCelestialFxMenuOpen() ? "ON" : "OFF") + "]";
-        String lgText = "H: Help [" + (showLegend ? "ON" : "OFF") + "]";
-        MeasureTool mt = input.getMeasureTool();
-        String mtText = "M: Measure [" + (mt != null && mt.isActive() ? "ON" : "OFF") + "]";
+        String camText = "C: Camera [" + cameraSettings.hudCameraModeLabel() + "]";
+        String fovText = cameraSettings.isAdaptiveFreeCamFovEnabled()
+                ? "Z: FOV [AUTO " + Math.round(cameraState.getCurrentFreeCamFov()) + "°]"
+                : "Z: FOV [FIX " + fixedFreeCamFovLabel() + "°]";
+        String ffText = "P: Follow [" + cameraSettings.getFollowFrameMode().hudLabel() + "]";
+        String opText = "T: Overlays [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
+        String fxText = "X: Settings [" + (uiState.getSettingsPanel().isOpen() ? "ON" : "OFF") + "]";
+        String lgText = "H: Help [" + (uiState.isLegendVisible() ? "ON" : "OFF") + "]";
+        String mtText = "M: Measure [" + (uiState.isMeasureActive() ? "ON" : "OFF") + "]";
         font.setColor(DIM_COLOR);
-        layout.setText(font, dimText);
-        font.draw(batch, dimText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 10);
         layout.setText(font, camText);
-        font.draw(batch, camText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 9);
+        font.draw(batch, camText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 8);
         layout.setText(font, fovText);
-        font.draw(batch, fovText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 8);
+        font.draw(batch, fovText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 7);
         layout.setText(font, ffText);
-        font.draw(batch, ffText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 7);
-        layout.setText(font, vsText);
-        font.draw(batch, vsText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 6);
+        font.draw(batch, ffText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 6);
         layout.setText(font, opText);
         font.draw(batch, opText, screenWidth - layout.width - MARGIN, MARGIN + LINE_HEIGHT * 5);
         layout.setText(font, mtText);
@@ -348,7 +362,7 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private void renderLegend(SpriteBatch batch, int screenWidth, int screenHeight) {
-        String dragArrowsAction = camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? "orbit" : "pan";
+        String dragArrowsAction = cameraSettings.getCameraMode() == CameraMode.FREE_CAM ? "orbit" : "pan";
         String[] lines = {
                 "SPACE        pause/resume",
                 "1-0  , .     time warp",
@@ -362,10 +376,10 @@ public class HUD {
                 "Z            camera FOV 5/60/auto",
                 "R            reset camera",
                 "V            visual scale",
-                "T            overlays",
+                "T            orbit overlays",
                 "Y            orbit style",
                 "M            measure",
-                "X            FX settings",
+                "X            settings",
                 "H            help",
                 "Q            quit",
         };
@@ -391,7 +405,7 @@ public class HUD {
         screenCam.update();
         shapeRenderer.setProjectionMatrix(screenCam.combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.setColor(PANEL_COLOR);
+        shapeRenderer.setColor(SETTINGS_PANEL_COLOR);
         shapeRenderer.rect(panelX, panelY, panelW, panelH);
         shapeRenderer.end();
         batch.begin();
@@ -406,12 +420,17 @@ public class HUD {
         }
     }
 
-    private void renderCelestialFxPopup(SpriteBatch batch, int screenWidth, int screenHeight) {
-        String title = input.getCelestialFxMenuTitle();
-        String hint = input.getCelestialFxMenuHint();
-        String statusText = input.getCelestialFxStatusText();
-        boolean showStatus = input.isCelestialFxStatusVisible();
-        int optionCount = input.getCelestialFxMenuOptionCount();
+    private int fixedFreeCamFovLabel() {
+        return cameraSettings.getFixedFreeCamFovPresetIndex() == 0 ? 5 : 60;
+    }
+
+    private void renderSettingsPopup(SpriteBatch batch, int screenWidth, int screenHeight) {
+        SettingsPanelState settingsPanelState = uiState.getSettingsPanel();
+        String title = settingsPanelModel.getTitle();
+        String hint = settingsPanelModel.getHint();
+        String statusText = settingsPanelState.getStatusText();
+        boolean showStatus = settingsPanelState.isStatusVisible();
+        int optionCount = settingsPanelModel.getOptionCount();
 
         float maxW = 0f;
         layout.setText(font, title);
@@ -423,16 +442,16 @@ public class HUD {
             maxW = Math.max(maxW, layout.width + STATUS_PILL_PAD_X * 2f);
         }
         for (int i = 0; i < optionCount; i++) {
-            String optionLine = input.getCelestialFxOptionLine(i);
+            String optionLine = settingsPanelModel.getOptionLine(i);
             layout.setText(font, optionLine);
             maxW = Math.max(maxW, layout.width);
         }
 
         float panelW = maxW + LEGEND_PAD * 2f;
         float panelH = LEGEND_PAD * 2f + LINE_HEIGHT * (optionCount + 2.6f);
-        float panelX = input.resolveCelestialFxPanelX(screenWidth, panelW);
-        float panelY = input.resolveCelestialFxPanelY(screenHeight, panelH);
-        input.setCelestialFxPanelBounds(panelX, panelY, panelW, panelH);
+        float panelX = settingsPanelState.resolvePanelX(screenWidth, panelW);
+        float panelY = settingsPanelState.resolvePanelY(screenHeight, panelH);
+        settingsPanelState.setPanelBounds(panelX, panelY, panelW, panelH, screenWidth, screenHeight);
         float titleY = panelY + panelH - LEGEND_PAD - LINE_HEIGHT * 0.15f;
         float hintY = titleY - LINE_HEIGHT;
         float optionsTopY = hintY - LINE_HEIGHT * 1.3f;
@@ -447,7 +466,7 @@ public class HUD {
         shapeRenderer.setColor(PANEL_COLOR);
         shapeRenderer.rect(panelX, panelY, panelW, panelH);
 
-        int selection = input.getCelestialFxMenuSelection();
+        int selection = settingsPanelState.getCurrentSelection();
         float selectedY = optionsTopY - selection * LINE_HEIGHT - LINE_HEIGHT * 0.85f;
         shapeRenderer.setColor(SELECTION_COLOR);
         shapeRenderer.rect(panelX + 6f, selectedY, panelW - 12f, LINE_HEIGHT * 1.05f);
@@ -473,11 +492,12 @@ public class HUD {
             font.draw(batch, statusText, statusX + STATUS_PILL_PAD_X, statusY);
         }
         font.setColor(DIM_COLOR);
+        font.setColor(SETTINGS_HINT_COLOR);
         font.draw(batch, hint, panelX + LEGEND_PAD, hintY);
 
         for (int i = 0; i < optionCount; i++) {
-            String optionLine = input.getCelestialFxOptionLine(i);
-            font.setColor(i == selection ? TEXT_COLOR : DIM_COLOR);
+            String optionLine = settingsPanelModel.getOptionLine(i);
+            font.setColor(i == selection ? TEXT_COLOR : SETTINGS_OPTION_COLOR);
             font.draw(batch, optionLine, panelX + LEGEND_PAD, optionsTopY - i * LINE_HEIGHT);
         }
     }
@@ -487,7 +507,7 @@ public class HUD {
     // -------------------------------------------------------------------------
 
     private String formatWarp(double warp) {
-        return GravitasInputProcessor.formatWarpPreset(warp);
+        return WarpPresets.formatDisplayLabel(warp);
     }
 
     private String buildFollowTargetSubtitle(SimObject followTarget) {
@@ -593,9 +613,5 @@ public class HUD {
 
     public void setSelectedObject(SimObject obj) {
         this.selectedObject = obj;
-    }
-
-    public void toggleLegend() {
-        showLegend = !showLegend;
     }
 }

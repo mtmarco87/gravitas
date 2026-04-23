@@ -380,6 +380,7 @@ void main() {
             vec2 macroUV = noiseUV * 0.35 + vec2(u_cloudTime * 0.002, u_cloudTime * 0.001);
             float macro = fbm2WrappedX(macroUV, 8.0 * 0.35, 3);
             float macroMask = smoothstep(0.30, 0.55, macro);
+            macroMask = mix(macroMask, max(macroMask * 0.55, proceduralTextureMask), proceduralHasTexture * 0.75);
 
             float n = fbm2WrappedX(noiseUV + vec2(u_cloudTime * 0.005, 0.0), 8.0, 5);
 
@@ -393,6 +394,7 @@ void main() {
             float detail = fbm2WrappedX(noiseUV * 2.5 + vec2(u_cloudTime * 0.01, u_cloudTime * 0.007), 8.0 * 2.5, 4);
             cloud *= 0.5 + 0.5 * detail;
             cloud *= mix(0.5, 1.0, macroMask);
+            cloud = mix(cloud, max(cloud * (0.35 + 0.65 * proceduralTextureMask), proceduralTextureMask * 0.60), proceduralHasTexture * 0.75);
             proceduralCloud = cloud;
         }
     }

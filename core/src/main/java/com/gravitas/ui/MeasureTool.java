@@ -10,11 +10,13 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Matrix4;
 import com.badlogic.gdx.math.Vector2;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
 import com.gravitas.physics.PhysicsEngine;
 import com.gravitas.rendering.core.ProjectedEllipse;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.state.UiState;
 import com.gravitas.util.FormatUtils;
 
 /**
@@ -79,11 +81,9 @@ public class MeasureTool {
     private final PhysicsEngine physics;
     private final ShapeRenderer shape;
     private final BitmapFont font;
+    private final UiState uiState;
     private final GlyphLayout layout = new GlyphLayout();
     private final Matrix4 bodyRotation = new Matrix4();
-
-    /** Whether measure mode is currently active. */
-    private boolean active = false;
 
     /** True once the start point has been placed. */
     private boolean hasStart = false;
@@ -104,11 +104,12 @@ public class MeasureTool {
     private final SnapCandidate scratchSnapCandidate = new SnapCandidate();
 
     public MeasureTool(WorldCamera camera, PhysicsEngine physics, ShapeRenderer shapeRenderer,
-            FontManager fontManager) {
+            FontManager fontManager, UiState uiState) {
         this.camera = camera;
         this.physics = physics;
         this.shape = shapeRenderer;
         this.font = fontManager.uiFont;
+        this.uiState = uiState;
     }
 
     // -------------------------------------------------------------------------
@@ -116,19 +117,19 @@ public class MeasureTool {
     // -------------------------------------------------------------------------
 
     public boolean isActive() {
-        return active;
+        return uiState.isMeasureActive();
     }
 
     /** Toggle measure mode on/off. Clears any in-progress measurement. */
     public void toggle() {
-        active = !active;
+        uiState.toggleMeasureActive();
         clear();
         updateCursor();
     }
 
     /** Exit measure mode and clear everything. */
     public void cancel() {
-        active = false;
+        uiState.setMeasureActive(false);
         clear();
         updateCursor();
     }
@@ -139,7 +140,7 @@ public class MeasureTool {
     }
 
     private void updateCursor() {
-        Gdx.graphics.setSystemCursor(active ? SystemCursor.Crosshair : SystemCursor.Arrow);
+        Gdx.graphics.setSystemCursor(uiState.isMeasureActive() ? SystemCursor.Crosshair : SystemCursor.Arrow);
     }
 
     /**
@@ -153,7 +154,7 @@ public class MeasureTool {
      * @return true if the click was consumed
      */
     public boolean onClick(int screenX, int screenY, boolean worldLocked, boolean bodySnap) {
-        if (!active)
+        if (!uiState.isMeasureActive())
             return false;
 
         float sy = Gdx.graphics.getHeight() - screenY; // bottom-left origin
@@ -185,7 +186,7 @@ public class MeasureTool {
      * @param batch the SpriteBatch (must NOT be already in begin/end)
      */
     public void render(SpriteBatch batch, int screenWidth, int screenHeight) {
-        if (!active || !hasStart)
+        if (!uiState.isMeasureActive() || !hasStart)
             return;
 
         resolveAnchorWorld(startPoint, scratchStartWorld);
@@ -347,7 +348,7 @@ public class MeasureTool {
         boolean haveBest = false;
         float toleranceSq = BODY_SNAP_TOLERANCE_PX * BODY_SNAP_TOLERANCE_PX;
 
-        for (SimObject obj : physics.getObjects()) {
+        for (SimObject obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody body) || !body.active) {
                 continue;
             }
@@ -382,7 +383,7 @@ public class MeasureTool {
         out.body = body;
         out.localU = u;
         out.localV = v;
-        out.depth = camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? camera.depthOf(body.x, body.y, body.z) : 0.0;
+        out.depth = camera.getMode() == CameraMode.FREE_CAM ? camera.depthOf(body.x, body.y, body.z) : 0.0;
 
         if (radial <= 1.0f) {
             out.inside = true;
@@ -419,7 +420,7 @@ public class MeasureTool {
         if (Math.abs(candidate.scoreSq - best.scoreSq) > 1e-4f) {
             return candidate.scoreSq < best.scoreSq;
         }
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM && Math.abs(candidate.depth - best.depth) > 1e-6) {
+        if (camera.getMode() == CameraMode.FREE_CAM && Math.abs(candidate.depth - best.depth) > 1e-6) {
             return candidate.depth < best.depth;
         }
         return candidate.centerDistSq < best.centerDistSq;
@@ -439,7 +440,7 @@ public class MeasureTool {
 
     private boolean resolveBodySurfacePoint(CelestialBody body, float screenX, float screenY, double u, double v,
             double[] out) {
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+        if (camera.getMode() == CameraMode.FREE_CAM) {
             double camX = camera.getCamPosX();
             double camY = camera.getCamPosY();
             double camZ = camera.getCamPosZ();
@@ -490,7 +491,7 @@ public class MeasureTool {
         double offsetX = wx - body.x;
         double offsetY = wy - body.y;
         double offsetZ = wz - body.z;
-        camera.buildBodyRotationMatrix(bodyRotation, body, body.rotationAngle);
+        camera.buildBodyOrientationMatrix(bodyRotation, body);
         float[] m = bodyRotation.val;
 
         anchor.localX = offsetX * m[Matrix4.M00] + offsetY * m[Matrix4.M10] + offsetZ * m[Matrix4.M20];
@@ -499,7 +500,7 @@ public class MeasureTool {
     }
 
     private void resolveBodyLockedAnchor(AnchorPoint anchor, double[] out) {
-        camera.buildBodyRotationMatrix(bodyRotation, anchor.body, anchor.body.rotationAngle);
+        camera.buildBodyOrientationMatrix(bodyRotation, anchor.body);
         float[] m = bodyRotation.val;
 
         out[0] = anchor.body.x
@@ -511,16 +512,11 @@ public class MeasureTool {
     }
 
     private double[] pickWorldPoint(float screenX, float screenY) {
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+        if (camera.getMode() == CameraMode.FREE_CAM) {
             return camera.screenToWorldOnFocusPlane(screenX, screenY);
         }
 
         double[] world = camera.screenToWorld(screenX, screenY);
         return new double[] { world[0], world[1], camera.getFocusZ() };
     }
-
-    // -------------------------------------------------------------------------
-    // Formatting
-    // -------------------------------------------------------------------------
-
 }

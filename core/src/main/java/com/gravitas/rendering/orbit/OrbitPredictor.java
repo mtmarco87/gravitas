@@ -3,13 +3,19 @@ package com.gravitas.rendering.orbit;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.Disposable;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
+import com.gravitas.settings.AppSettings;
+import com.gravitas.settings.OverlaySettings;
+import com.gravitas.settings.enums.OrbitRenderMode;
+import com.gravitas.util.GeometryUtils;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Draws predicted Keplerian orbital ellipses for celestial bodies.
@@ -21,7 +27,7 @@ import java.util.Map;
  * Since the simulation uses N-body dynamics, this is only an approximation —
  * but it gives a clear visual overview of the current instantaneous orbit.
  *
- * Toggle via {@link #setEnabled(boolean)}.
+ * Toggle via shared overlay settings.
  */
 public class OrbitPredictor implements Disposable {
 
@@ -53,8 +59,6 @@ public class OrbitPredictor implements Disposable {
     private static final float FREE_CAM_CURVE_TOLERANCE_PX = 1.5f;
     private static final float FREE_CAM_CULL_MARGIN = 120f;
 
-    private static final OrbitRenderMode DEFAULT_ORBIT_RENDER_MODE = OrbitRenderMode.CPU_DASHED_SIMPLE;
-
     /**
      * EMA smoothing factor for orbital elements (0 = fully smoothed, 1 = raw).
      * 0.12 keeps ~88% of the previous frame's value — visually stable without
@@ -64,7 +68,7 @@ public class OrbitPredictor implements Disposable {
 
     private final ShapeRenderer shapeRenderer;
     private final WorldCamera camera;
-    private boolean enabled = false;
+    private final OverlaySettings overlaySettings;
 
     /** Per-body smoothed orbital elements keyed by body id. */
     private final Map<String, double[]> smoothed = new HashMap<>();
@@ -72,17 +76,17 @@ public class OrbitPredictor implements Disposable {
     /** GPU-driven dashed line renderer for orbit paths in screen space. */
     private final DashedLineRenderer dashedLineRenderer;
 
-    /** Runtime-selectable orbit style shared by TOP_VIEW and FREE_CAM. */
-    private OrbitRenderMode orbitRenderMode;
+    /** Reused scratch for temporary vector normalization during orbit fitting. */
+    private final double[] scratchNormalizedVector = new double[3];
 
     /** Set during render() to route line() calls to the correct renderer. */
     private boolean useGpuDash = false;
 
-    public OrbitPredictor(ShapeRenderer shapeRenderer, WorldCamera camera) {
+    public OrbitPredictor(ShapeRenderer shapeRenderer, WorldCamera camera, AppSettings settings) {
         this.shapeRenderer = shapeRenderer;
         this.camera = camera;
+        this.overlaySettings = Objects.requireNonNull(settings, "settings").getOverlaySettings();
         this.dashedLineRenderer = new DashedLineRenderer();
-        this.orbitRenderMode = OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
     }
 
     @Override
@@ -90,32 +94,8 @@ public class OrbitPredictor implements Disposable {
         dashedLineRenderer.dispose();
     }
 
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
-
     public boolean isEnabled() {
-        return enabled;
-    }
-
-    public OrbitRenderMode getOrbitRenderMode() {
-        return orbitRenderMode;
-    }
-
-    public void setOrbitRenderMode(OrbitRenderMode orbitRenderMode) {
-        OrbitRenderMode resolved = OrbitRenderMode.resolveEnabled(orbitRenderMode);
-        if (resolved != null) {
-            this.orbitRenderMode = resolved;
-        }
-    }
-
-    public void cycleOrbitRenderMode() {
-        OrbitRenderMode next = orbitRenderMode != null
-                ? orbitRenderMode.nextEnabled()
-                : OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
-        if (next != null) {
-            orbitRenderMode = next;
-        }
+        return overlaySettings.isShowOrbitPredictors();
     }
 
     /**
@@ -123,7 +103,7 @@ public class OrbitPredictor implements Disposable {
      * before bodies to preserve the older background-overlay look.
      */
     public boolean shouldRenderBeforeBodies() {
-        return enabled && orbitRenderMode == OrbitRenderMode.CPU_DASHED_SIMPLE;
+        return isEnabled() && overlaySettings.getOrbitRenderMode() == OrbitRenderMode.CPU_DASHED_SIMPLE;
     }
 
     /**
@@ -136,8 +116,10 @@ public class OrbitPredictor implements Disposable {
     }
 
     public void render(List<SimObject> objects, double timeWarpFactor, OrbitOcclusionMask occlusionMask) {
-        if (!enabled)
+        if (!isEnabled())
             return;
+
+        OrbitRenderMode orbitRenderMode = overlaySettings.getOrbitRenderMode();
 
         useGpuDash = orbitRenderMode == OrbitRenderMode.GPU_DASHED_OCCLUDED;
 
@@ -189,8 +171,8 @@ public class OrbitPredictor implements Disposable {
         double vy = body.vy - parent.vy;
         double vz = body.vz - parent.vz;
 
-        double r = Math.sqrt(rx * rx + ry * ry + rz * rz);
-        double v2 = vx * vx + vy * vy + vz * vz;
+        double r = Math.sqrt(GeometryUtils.lengthSq(rx, ry, rz));
+        double v2 = GeometryUtils.lengthSq(vx, vy, vz);
         double mu = G * (body.mass + parent.mass);
 
         // Semi-major axis from vis-viva: v² = μ(2/r − 1/a) → a = μ / (2μ/r − v²)
@@ -205,9 +187,11 @@ public class OrbitPredictor implements Disposable {
         double hx = ry * vz - rz * vy;
         double hy = rz * vx - rx * vz;
         double hz = rx * vy - ry * vx;
-        double hMag = Math.sqrt(hx * hx + hy * hy + hz * hz);
-        if (hMag < 1e-30)
+        if (!GeometryUtils.normalize(hx, hy, hz, scratchNormalizedVector))
             return null; // degenerate
+        double nhx = scratchNormalizedVector[0];
+        double nhy = scratchNormalizedVector[1];
+        double nhz = scratchNormalizedVector[2];
 
         // Eccentricity vector: e = (v × h)/μ − r̂
         double vxh_x = vy * hz - vz * hy;
@@ -216,7 +200,7 @@ public class OrbitPredictor implements Disposable {
         double ex = vxh_x / mu - rx / r;
         double ey = vxh_y / mu - ry / r;
         double ez = vxh_z / mu - rz / r;
-        double e = Math.sqrt(ex * ex + ey * ey + ez * ez);
+        double e = Math.sqrt(GeometryUtils.lengthSq(ex, ey, ez));
         if (e >= 0.9999)
             return null; // near-hyperbolic → skip
 
@@ -225,19 +209,27 @@ public class OrbitPredictor implements Disposable {
         // Orbital frame: P̂ = ê/|e| (toward periapsis), Q̂ = ĥ × P̂
         double Px, Py, Pz;
         if (e > 1e-8) {
-            Px = ex / e;
-            Py = ey / e;
-            Pz = ez / e;
+            if (!GeometryUtils.normalize(ex, ey, ez, scratchNormalizedVector)) {
+                return null;
+            }
         } else {
             // Near-circular: use radial direction as reference.
-            Px = rx / r;
-            Py = ry / r;
-            Pz = rz / r;
+            if (!GeometryUtils.normalize(rx, ry, rz, scratchNormalizedVector)) {
+                return null;
+            }
         }
-        double nhx = hx / hMag, nhy = hy / hMag, nhz = hz / hMag;
+        Px = scratchNormalizedVector[0];
+        Py = scratchNormalizedVector[1];
+        Pz = scratchNormalizedVector[2];
         double Qx = nhy * Pz - nhz * Py;
         double Qy = nhz * Px - nhx * Pz;
         double Qz = nhx * Py - nhy * Px;
+        if (!GeometryUtils.normalize(Qx, Qy, Qz, scratchNormalizedVector)) {
+            return null;
+        }
+        Qx = scratchNormalizedVector[0];
+        Qy = scratchNormalizedVector[1];
+        Qz = scratchNormalizedVector[2];
 
         // Centre of ellipse: focus (parent) offset by −a·e along P̂.
         double cxOff = -a * e * Px;
@@ -265,22 +257,20 @@ public class OrbitPredictor implements Disposable {
             prev[10] += SMOOTH_ALPHA * (czOff - prev[10]);
 
             // Re-normalise P̂ and re-orthogonalise Q̂ to keep a valid frame.
-            double pLen = Math.sqrt(prev[2] * prev[2] + prev[3] * prev[3] + prev[4] * prev[4]);
-            if (pLen > 1e-12) {
-                prev[2] /= pLen;
-                prev[3] /= pLen;
-                prev[4] /= pLen;
+            if (GeometryUtils.normalize(prev[2], prev[3], prev[4], scratchNormalizedVector)) {
+                prev[2] = scratchNormalizedVector[0];
+                prev[3] = scratchNormalizedVector[1];
+                prev[4] = scratchNormalizedVector[2];
             }
             // Q̂ = Q̂ − (Q̂·P̂)P̂, then normalise
             double dot = prev[5] * prev[2] + prev[6] * prev[3] + prev[7] * prev[4];
             prev[5] -= dot * prev[2];
             prev[6] -= dot * prev[3];
             prev[7] -= dot * prev[4];
-            double qLen = Math.sqrt(prev[5] * prev[5] + prev[6] * prev[6] + prev[7] * prev[7]);
-            if (qLen > 1e-12) {
-                prev[5] /= qLen;
-                prev[6] /= qLen;
-                prev[7] /= qLen;
+            if (GeometryUtils.normalize(prev[5], prev[6], prev[7], scratchNormalizedVector)) {
+                prev[5] = scratchNormalizedVector[0];
+                prev[6] = scratchNormalizedVector[1];
+                prev[7] = scratchNormalizedVector[2];
             }
         }
         a = prev[0];
@@ -338,7 +328,7 @@ public class OrbitPredictor implements Disposable {
         // per-segment culling in the drawing loop handles FREE_CAM.) ---
         float vw = camera.getCamera().viewportWidth;
         float vh = camera.getCamera().viewportHeight;
-        if (camera.getMode() == WorldCamera.CameraMode.TOP_VIEW) {
+        if (camera.getMode() == CameraMode.TOP_VIEW) {
             float mpp = camera.getMetersPerPixel();
             double focX = camera.getFocusX();
             double focY = camera.getFocusY();
@@ -371,7 +361,9 @@ public class OrbitPredictor implements Disposable {
             shapeRenderer.setColor(finalR, finalG, finalB, finalA);
         }
 
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+        OrbitRenderMode orbitRenderMode = overlaySettings.getOrbitRenderMode();
+
+        if (camera.getMode() == CameraMode.FREE_CAM) {
             if (orbitRenderMode == OrbitRenderMode.CPU_DASHED_SIMPLE) {
                 drawOrbitEllipseFreeCamCpuDashed(pts);
                 return;
@@ -882,11 +874,11 @@ public class OrbitPredictor implements Disposable {
             float ax, float ay, float bx, float by) {
         float abx = bx - ax;
         float aby = by - ay;
-        float lenSq = abx * abx + aby * aby;
+        float lenSq = (float) GeometryUtils.lengthSq(abx, aby);
         if (lenSq <= 1e-6f) {
             float dx = px - ax;
             float dy = py - ay;
-            return (float) Math.sqrt(dx * dx + dy * dy);
+            return (float) Math.sqrt(GeometryUtils.lengthSq(dx, dy));
         }
         float t = ((px - ax) * abx + (py - ay) * aby) / lenSq;
         t = Math.max(0f, Math.min(1f, t));
@@ -894,6 +886,6 @@ public class OrbitPredictor implements Disposable {
         float cy = ay + t * aby;
         float dx = px - cx;
         float dy = py - cy;
-        return (float) Math.sqrt(dx * dx + dy * dy);
+        return (float) Math.sqrt(GeometryUtils.lengthSq(dx, dy));
     }
 }

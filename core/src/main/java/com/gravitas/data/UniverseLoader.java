@@ -3,9 +3,9 @@ package com.gravitas.data;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
-import com.gravitas.entities.Belt;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.physics.PhysicsEngine;
+import com.gravitas.entities.Universe;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.regions.StellarSystem;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -38,30 +38,17 @@ import java.util.Map;
 public class UniverseLoader {
 
     private static final String TAG = "UniverseLoader";
-
-    private final List<Belt> belts = new ArrayList<>();
-    private final List<String> textureFolders = new ArrayList<>();
-
-    /** Returns all belts collected across all loaded systems. */
-    public List<Belt> getBelts() {
-        return belts;
-    }
-
-    /** Returns the texture folder names for each loaded system (in load order). */
-    public List<String> getTextureFolders() {
-        return textureFolders;
-    }
+    private static final double MIN_SYSTEM_RADIUS_PADDING = 1.0e9;
+    private static final double SYSTEM_RADIUS_PADDING_RATIO = 0.02;
 
     /**
      * Loads the universe from the manifest at {@code data/universe.json}.
      *
-     * @param engine   the PhysicsEngine to populate
      * @param flatMode when true, all systems are loaded with inclination = 0
-     * @return all loaded CelestialBody instances across all systems
+     * @return the loaded universe model
      */
-    public List<CelestialBody> load(PhysicsEngine engine, boolean flatMode) {
-        belts.clear();
-        textureFolders.clear();
+    public Universe load(boolean flatMode) {
+        Universe universe = new Universe();
 
         JsonValue root = new JsonReader().parse(Gdx.files.internal("data/universe.json"));
         JsonValue systemsArray = root.get("systems");
@@ -77,7 +64,6 @@ public class UniverseLoader {
 
         // Load each system, resolving origins.
         Map<String, CelestialBody> rootBodies = new HashMap<>();
-        List<CelestialBody> allBodies = new ArrayList<>();
 
         for (SystemEntry entry : sorted) {
             double ox = entry.ox, oy = entry.oy, oz = entry.oz;
@@ -95,12 +81,11 @@ public class UniverseLoader {
 
             SystemLoader loader = new SystemLoader();
             String systemFile = entry.file != null ? entry.file : "data/systems/" + entry.id + ".json";
-            List<CelestialBody> bodies = loader.load(engine, systemFile, flatMode, ox, oy, oz);
-            belts.addAll(loader.getBelts());
-            allBodies.addAll(bodies);
-
             String texFolder = entry.textures != null ? entry.textures : entry.id;
-            textureFolders.add(texFolder);
+            StellarSystem system = new StellarSystem(entry.id, entry.id, ox, oy, oz, 0.0, texFolder);
+            universe.addSystem(system);
+            List<CelestialBody> bodies = loader.load(universe, system, systemFile, flatMode, ox, oy, oz);
+            system.setRadius(computeSystemRadius(system, bodies, universe));
 
             // The first body without a parent is the root (star).
             for (CelestialBody cb : bodies) {
@@ -114,7 +99,38 @@ public class UniverseLoader {
                     + ox + ", " + oy + ", " + oz + ") — " + bodies.size() + " bodies.");
         }
 
-        return allBodies;
+        return universe;
+    }
+
+    private double computeSystemRadius(StellarSystem system, List<CelestialBody> bodies, Universe universe) {
+        double maxRadius = 0.0;
+        double centerX = system.getCenterX();
+        double centerY = system.getCenterY();
+        double centerZ = system.getCenterZ();
+
+        for (CelestialBody body : bodies) {
+            double dx = body.x - centerX;
+            double dy = body.y - centerY;
+            double dz = body.z - centerZ;
+            double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            double orbitalReach = body.parent != null ? body.semiMajorAxis * (1.0 + body.eccentricity) : 0.0;
+            maxRadius = Math.max(maxRadius, distance + orbitalReach + body.radius);
+        }
+
+        for (var belt : universe.getBelts()) {
+            if (belt.sourceRegion != system || belt.parent == null) {
+                continue;
+            }
+
+            double dx = belt.parent.x - centerX;
+            double dy = belt.parent.y - centerY;
+            double dz = belt.parent.z - centerZ;
+            double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            maxRadius = Math.max(maxRadius, distance + belt.outerRadius);
+        }
+
+        double padding = Math.max(MIN_SYSTEM_RADIUS_PADDING, maxRadius * SYSTEM_RADIUS_PADDING_RATIO);
+        return maxRadius + padding;
     }
 
     // -------------------------------------------------------------------------

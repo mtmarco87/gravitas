@@ -1,6 +1,6 @@
-package com.gravitas.physics;
+package com.gravitas.physics.atmosphere;
 
-import com.gravitas.entities.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
 
 /**
  * Computes atmospheric properties at a given altitude above a CelestialBody.

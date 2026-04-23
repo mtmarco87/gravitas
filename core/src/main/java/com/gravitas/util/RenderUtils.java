@@ -1,7 +1,8 @@
 package com.gravitas.util;
 
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.enums.BodyType;
+import com.gravitas.entities.core.SimObject;
 
 import java.util.Map;
 
@@ -40,7 +41,7 @@ public final class RenderUtils {
             Map<SimObject, Integer> objIndex) {
         if (!(obj instanceof CelestialBody cb))
             return false;
-        if (cb.bodyType != CelestialBody.BodyType.MOON || cb.parent == null)
+        if (cb.bodyType != BodyType.MOON || cb.parent == null)
             return false;
         Integer pi = objIndex.get(cb.parent);
         if (pi == null)

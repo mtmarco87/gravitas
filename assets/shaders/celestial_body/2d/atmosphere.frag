@@ -30,7 +30,7 @@ void main() {
         surfaceR2 = 1.0;
     }
     float z = sqrt(max(0.0, 1.0 - surfaceR2));
-    vec3 worldNormal = vec3(surfaceUv.x, -surfaceUv.y, z);
+    vec3 worldNormal = vec3(surfaceUv.x, surfaceUv.y, z);
     vec3 normal = normalize(vec3(
         dot(u_worldToBodyRow0, worldNormal),
         dot(u_worldToBodyRow1, worldNormal),

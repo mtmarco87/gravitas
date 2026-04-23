@@ -7,7 +7,8 @@ import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
-import com.gravitas.entities.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.regions.StellarSystem;
 
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,7 +34,6 @@ final class CelestialAssetsRenderer {
     private static final String SHADER_2D = "celestial_body/2d";
     private static final String SHADER_3D = "celestial_body/3d";
 
-    private final String textureBasePath;
     private final SpriteBatch batch;
 
     private ShaderProgram planetShader;
@@ -60,8 +60,7 @@ final class CelestialAssetsRenderer {
     private final Map<String, Texture> ringTextures = new HashMap<>();
     private final Set<String> missingWarned = new HashSet<>();
 
-    CelestialAssetsRenderer(String systemFolder) {
-        this.textureBasePath = "textures/" + systemFolder + "/";
+    CelestialAssetsRenderer() {
         this.batch = new SpriteBatch();
 
         compileShaders();
@@ -111,7 +110,7 @@ final class CelestialAssetsRenderer {
     }
 
     Texture getCloudTexture(CelestialBody body) {
-        return loadSurfaceTexture(body.name + " cloud", trimToNull(body.clouds.texture));
+        return loadSurfaceTexture(body, body.name + " cloud", trimToNull(body.clouds.texture));
     }
 
     ShaderProgram dot3dShader() {
@@ -143,13 +142,13 @@ final class CelestialAssetsRenderer {
             return null;
         }
 
-        SurfaceTextures textures = surfaceTextures.get(body.name);
+        SurfaceTextures textures = surfaceTextures.get(body.id);
         if (textures != null) {
             return textures.base != null ? textures : null;
         }
 
         textures = loadSurfaceTextures(body);
-        surfaceTextures.put(body.name, textures);
+        surfaceTextures.put(body.id, textures);
         return textures.base != null ? textures : null;
     }
 
@@ -164,11 +163,11 @@ final class CelestialAssetsRenderer {
         String nightFile = trimToNull(body.texture.night);
 
         if (nightFile == null && baseFile != null) {
-            nightFile = inferNightTextureFilename(baseFile);
+            nightFile = inferNightTextureFilename(body, baseFile);
         }
 
-        textures.base = loadSurfaceTexture(body.name, baseFile);
-        textures.night = loadSurfaceTexture(body.name + " night", nightFile);
+        textures.base = loadSurfaceTexture(body, body.name, baseFile);
+        textures.night = loadSurfaceTexture(body, body.name + " night", nightFile);
 
         if (textures.base == null) {
             textures.base = textures.night;
@@ -176,12 +175,12 @@ final class CelestialAssetsRenderer {
         return textures;
     }
 
-    private Texture loadSurfaceTexture(String warnKey, String fileName) {
+    private Texture loadSurfaceTexture(CelestialBody body, String warnKey, String fileName) {
         if (!hasText(fileName)) {
             return null;
         }
 
-        String path = textureBasePath + fileName;
+        String path = textureBasePath(body) + fileName;
         Texture tex = surfaceTextureCache.get(path);
         if (tex != null) {
             return tex;
@@ -202,7 +201,7 @@ final class CelestialAssetsRenderer {
         return tex;
     }
 
-    private String inferNightTextureFilename(String baseFile) {
+    private String inferNightTextureFilename(CelestialBody body, String baseFile) {
         int dot = baseFile.lastIndexOf('.');
         String stem = dot >= 0 ? baseFile.substring(0, dot) : baseFile;
         if (stem.endsWith("-nightmap")) {
@@ -217,7 +216,13 @@ final class CelestialAssetsRenderer {
         if (variant.equals(baseFile)) {
             return null;
         }
-        return Gdx.files.internal(textureBasePath + variant).exists() ? variant : null;
+        return Gdx.files.internal(textureBasePath(body) + variant).exists() ? variant : null;
+    }
+
+    private String textureBasePath(CelestialBody body) {
+        StellarSystem system = body.getSourceSystem();
+        String namespace = system != null ? trimToNull(system.getTextureNamespace()) : null;
+        return namespace != null ? "textures/" + namespace + "/" : "textures/";
     }
 
     private static boolean hasText(String value) {
@@ -236,12 +241,12 @@ final class CelestialAssetsRenderer {
         if (body.ring.texture == null || body.ring.texture.isEmpty()) {
             return null;
         }
-        Texture tex = ringTextures.get(body.ring.texture);
+        String path = textureBasePath(body) + body.ring.texture;
+        Texture tex = ringTextures.get(path);
         if (tex != null) {
             return tex;
         }
 
-        String path = textureBasePath + body.ring.texture;
         if (!Gdx.files.internal(path).exists()) {
             Gdx.app.log(TAG, "Ring texture not found: " + path);
             return null;
@@ -250,19 +255,19 @@ final class CelestialAssetsRenderer {
         tex = new Texture(Gdx.files.internal(path));
         tex.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
         tex.setWrap(Texture.TextureWrap.ClampToEdge, Texture.TextureWrap.ClampToEdge);
-        ringTextures.put(body.ring.texture, tex);
+        ringTextures.put(path, tex);
         Gdx.app.log(TAG, "Loaded ring texture: " + path);
         return tex;
     }
 
     Mesh getRingMesh(CelestialBody body) {
-        Mesh mesh = ringMeshes.get(body.name);
+        Mesh mesh = ringMeshes.get(body.id);
         if (mesh != null) {
             return mesh;
         }
         float innerFrac = (float) (body.ring.innerRadius / body.ring.outerRadius);
         mesh = MeshFactory.createRingDisc(innerFrac, 128);
-        ringMeshes.put(body.name, mesh);
+        ringMeshes.put(body.id, mesh);
         return mesh;
     }
 

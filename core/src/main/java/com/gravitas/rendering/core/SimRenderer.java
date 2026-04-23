@@ -3,19 +3,24 @@ package com.gravitas.rendering.core;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.Vector2;
-import com.gravitas.entities.Belt;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.Universe;
+import com.gravitas.entities.bodies.Belt;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.enums.BodyType;
+import com.gravitas.entities.core.SimObject;
 import com.gravitas.rendering.celestial_body.CelestialBodyRenderer;
-import com.gravitas.rendering.celestial_body.CelestialFxSettings;
 import com.gravitas.rendering.orbit.OrbitOcclusionMask;
 import com.gravitas.rendering.orbit.OrbitPredictor;
 import com.gravitas.rendering.orbit.OrbitTrail;
+import com.gravitas.settings.AppSettings;
+import com.gravitas.settings.FxSettings;
+import com.gravitas.settings.OverlaySettings;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 
 /**
@@ -27,10 +32,14 @@ import java.util.Random;
  * 3. Body labels (handled by HUD via BitmapFont)
  *
  * A new OrbitTrail is created automatically for each object on first render.
- * Trails are sampled at every physics tick via
- * {@link #recordTrailPositions(List)}.
+ * Trails are sampled at every physics tick via {@link #recordTrailPositions()}.
  */
 public class SimRenderer {
+
+    private enum OcclusionVisibilityMode {
+        STANDARD,
+        CLEAR
+    }
 
     private static final int OCCLUSION_SUBDIVISION_DEPTH = 5;
 
@@ -43,6 +52,11 @@ public class SimRenderer {
     private static final float SPIN_AXIS_MARKER_MIN_RADIUS_PX = 2.2f;
     private static final float SPIN_AXIS_MARKER_MAX_RADIUS_PX = 5.5f;
     private static final float NORTH_MARKER_ALPHA = 0.98f;
+    private static final float ORBIT_NORMAL_LINE_ALPHA = 0.78f;
+    private static final float ORBIT_NORMAL_MARKER_ALPHA = 0.98f;
+    private static final float PRIME_MERIDIAN_LINE_ALPHA = 0.76f;
+    private static final float PRIME_MERIDIAN_MARKER_ALPHA = 0.98f;
+    private static final float PRIME_MERIDIAN_VISIBILITY_BIAS_PX = 1.5f;
     private static final double TOP_VIEW_AXIS_ALIGNMENT_EPSILON = 1e-6;
 
     /**
@@ -69,8 +83,12 @@ public class SimRenderer {
 
     private final ShapeRenderer shapeRenderer;
     private final WorldCamera camera;
+    private final Universe universe;
+    private final OverlaySettings overlaySettings;
     private final Map<String, OrbitTrail> trails = new HashMap<>();
     private final double[] scratchSpinAxis = new double[3];
+    private final double[] scratchOrbitNormal = new double[3];
+    private final double[] scratchPrimeMeridian = new double[3];
     private final List<SpinAxisMarker> spinAxisMarkers = new ArrayList<>();
 
     /**
@@ -79,14 +97,8 @@ public class SimRenderer {
      */
     private CelestialBodyRenderer celestialBodyRenderer;
 
-    /** When false, orbit trails are hidden but continue recording. */
-    private boolean trailsEnabled = true;
-
-    /** When true, spin-axis overlays are drawn over visible bodies. */
-    private boolean spinAxisOverlayEnabled = false;
-
-    /** When true, body radii are exaggerated for visibility. */
-    private boolean visualScaleMode = true;
+    /** Cached to detect visual-scale mode changes and clear the overlap latch. */
+    private boolean cachedVisualScaleMode;
 
     /**
      * Latch: once an overlap is detected the visual scale stays inhibited
@@ -109,7 +121,7 @@ public class SimRenderer {
         final double[] angVel; // angular velocity (rad/s) from Kepler: sqrt(GM/r³)
         final Color color;
         final int count;
-        final String parentName; // name of parent body this belt orbits
+        final SimObject parent;
 
         // GM_Sun (m³/s²)
         private static final double GM_SUN = 1.32712440018e20;
@@ -123,7 +135,7 @@ public class SimRenderer {
 
         BeltParticles(Belt belt) {
             this.count = belt.particleCount;
-            this.parentName = belt.parentName;
+            this.parent = belt.parent;
             this.angle = new double[count];
             this.radius = new double[count];
             this.zOff = new double[count];
@@ -164,36 +176,24 @@ public class SimRenderer {
         int segments;
     }
 
-    /**
-     * Supplies belt data for rendering. Call once after loading.
-     */
-    public void setBelts(List<Belt> belts) {
+    private void rebuildBeltParticles() {
         beltParticles.clear();
-        for (Belt b : belts) {
+        for (Belt b : universe.getBelts()) {
             beltParticles.add(new BeltParticles(b));
         }
     }
 
-    public SimRenderer(ShapeRenderer shapeRenderer, WorldCamera camera) {
+    public SimRenderer(ShapeRenderer shapeRenderer, WorldCamera camera, Universe universe, AppSettings settings) {
         this.shapeRenderer = shapeRenderer;
         this.camera = camera;
-    }
-
-    /**
-     * Initialises the texture-based planet renderer for a specific stellar system.
-     * Must be called after libGDX GL context is ready (i.e. inside create()).
-     * 
-     * @param systemFolder folder name under assets/textures/ (e.g. "solar_system")
-     */
-    public void initCelestialBodyRenderer(String systemFolder) {
-        celestialBodyRenderer = new CelestialBodyRenderer(camera, shapeRenderer, systemFolder);
-    }
-
-    public void setVisualScaleMode(boolean enabled) {
-        if (this.visualScaleMode != enabled) {
-            vsInhibited = false;
-        }
-        this.visualScaleMode = enabled;
+        this.universe = Objects.requireNonNull(universe, "universe");
+        AppSettings appSettings = Objects.requireNonNull(settings, "settings");
+        FxSettings fxSettings = appSettings.getFxSettings();
+        this.overlaySettings = appSettings.getOverlaySettings();
+        this.cachedVisualScaleMode = overlaySettings.isVisualScaleMode();
+        this.celestialBodyRenderer = new CelestialBodyRenderer(camera, shapeRenderer);
+        this.celestialBodyRenderer.setFxSettings(fxSettings);
+        rebuildBeltParticles();
     }
 
     /** Called by input handler on scroll/zoom so the VS latch can re-evaluate. */
@@ -201,33 +201,20 @@ public class SimRenderer {
         vsInhibited = false;
     }
 
-    public void setCelestialFxSettings(CelestialFxSettings settings) {
-        if (celestialBodyRenderer != null) {
-            celestialBodyRenderer.setCelestialFxSettings(settings);
-        }
-    }
-
-    public void setTrailsEnabled(boolean enabled) {
-        this.trailsEnabled = enabled;
-    }
-
-    public void setSpinAxisOverlayEnabled(boolean enabled) {
-        this.spinAxisOverlayEnabled = enabled;
-    }
-
     public boolean isTrailsEnabled() {
-        return trailsEnabled;
+        return overlaySettings.isShowTrails();
     }
 
     public boolean isVisualScaleMode() {
-        return visualScaleMode;
+        return overlaySettings.isVisualScaleMode();
     }
 
     // -------------------------------------------------------------------------
     // Called each physics step (not necessarily each render frame)
     // -------------------------------------------------------------------------
 
-    public void recordTrailPositions(List<SimObject> objects) {
+    public void recordTrailPositions() {
+        List<SimObject> objects = universe.getSimObjects();
         for (SimObject obj : objects) {
             if (!obj.active)
                 continue;
@@ -240,7 +227,8 @@ public class SimRenderer {
     // Called each render frame
     // -------------------------------------------------------------------------
 
-    public void render(List<SimObject> objects, double simDt, OrbitPredictor orbitPredictor, double timeWarpFactor) {
+    public void render(double simDt, OrbitPredictor orbitPredictor, double timeWarpFactor) {
+        List<SimObject> objects = universe.getSimObjects();
         renderBelts(simDt, objects);
 
         boolean renderPredictorBeforeBodies = orbitPredictor != null && orbitPredictor.shouldRenderBeforeBodies();
@@ -257,16 +245,26 @@ public class SimRenderer {
         renderBodies(objects, sx, sy, sr, simDt);
 
         OrbitOcclusionMask occlusionMask = new OrbitOcclusionMask(camera, objects, sr);
-        if (spinAxisOverlayEnabled) {
+        if (overlaySettings.isShowSpinAxis()) {
             renderSpinAxisOverlays(objects, occlusionMask, sr);
         }
-        if (trailsEnabled) {
+        if (overlaySettings.isShowOrbitNormal()) {
+            renderOrbitNormalOverlays(objects, occlusionMask, sr);
+        }
+        if (overlaySettings.isShowPrimeMeridian()) {
+            renderPrimeMeridianOverlays(objects, occlusionMask, sr);
+        }
+        if (overlaySettings.isShowTrails()) {
             renderTrails(objects, occlusionMask, sr);
         }
         if (orbitPredictor != null && !renderPredictorBeforeBodies) {
             orbitPredictor.render(objects, timeWarpFactor,
-                    camera.getMode() == WorldCamera.CameraMode.FREE_CAM ? occlusionMask : null);
+                    camera.getMode() == CameraMode.FREE_CAM ? occlusionMask : null);
         }
+    }
+
+    public void prewarmTopViewAssets() {
+        celestialBodyRenderer.prewarmTopViewAssets(universe.getSimObjects());
     }
 
     // -------------------------------------------------------------------------
@@ -289,13 +287,10 @@ public class SimRenderer {
         for (BeltParticles bp : beltParticles) {
             // Find the parent body this belt orbits around.
             double parentX = 0, parentY = 0, parentZ = 0;
-            for (SimObject obj : objects) {
-                if (obj.name.equals(bp.parentName)) {
-                    parentX = obj.x;
-                    parentY = obj.y;
-                    parentZ = obj.z;
-                    break;
-                }
+            if (bp.parent != null) {
+                parentX = bp.parent.x;
+                parentY = bp.parent.y;
+                parentZ = bp.parent.z;
             }
 
             for (int i = 0; i < bp.count; i++) {
@@ -326,7 +321,7 @@ public class SimRenderer {
     private void renderSpinAxisOverlays(List<SimObject> objects, OrbitOcclusionMask occlusionMask,
             float[] screenRadii) {
         spinAxisMarkers.clear();
-        boolean topView = camera.getMode() == WorldCamera.CameraMode.TOP_VIEW;
+        boolean topView = camera.getMode() == CameraMode.TOP_VIEW;
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         for (int objectIndex = 0; objectIndex < objects.size(); objectIndex++) {
@@ -424,6 +419,200 @@ public class SimRenderer {
         shapeRenderer.end();
     }
 
+    private void renderOrbitNormalOverlays(List<SimObject> objects, OrbitOcclusionMask occlusionMask,
+            float[] screenRadii) {
+        spinAxisMarkers.clear();
+        boolean topView = camera.getMode() == CameraMode.TOP_VIEW;
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        for (int objectIndex = 0; objectIndex < objects.size(); objectIndex++) {
+            SimObject obj = objects.get(objectIndex);
+            if (!(obj instanceof CelestialBody body) || !body.active || body.parent == null) {
+                continue;
+            }
+
+            float screenRadius = objectIndex < screenRadii.length ? screenRadii[objectIndex] : 0f;
+            if (screenRadius < SPIN_AXIS_MIN_BODY_RADIUS_PX) {
+                continue;
+            }
+
+            double selfClipRadius = trailSelfClipRadius(body, screenRadius);
+            if (selfClipRadius <= 0.0) {
+                continue;
+            }
+
+            double halfLength = selfClipRadius * SPIN_AXIS_HALF_LENGTH_SCALE;
+            scratchOrbitNormal[0] = body.orbitFrame.normalX;
+            scratchOrbitNormal[1] = body.orbitFrame.normalY;
+            scratchOrbitNormal[2] = body.orbitFrame.normalZ;
+
+            double southX = body.x - scratchOrbitNormal[0] * halfLength;
+            double southY = body.y - scratchOrbitNormal[1] * halfLength;
+            double southZ = body.z - scratchOrbitNormal[2] * halfLength;
+            double northX = body.x + scratchOrbitNormal[0] * halfLength;
+            double northY = body.y + scratchOrbitNormal[1] * halfLength;
+            double northZ = body.z + scratchOrbitNormal[2] * halfLength;
+
+            if (!topView && camera.depthOf(body.x, body.y, body.z) <= 0.0) {
+                continue;
+            }
+
+            shapeRenderer.setColor(0.96f, 0.78f, 0.34f, ORBIT_NORMAL_LINE_ALPHA);
+
+            boolean northVisible;
+            if (topView) {
+                northVisible = drawTopViewSpinAxisSegments(body,
+                        selfClipRadius,
+                        halfLength,
+                        scratchOrbitNormal[0],
+                        scratchOrbitNormal[1],
+                        scratchOrbitNormal[2],
+                        occlusionMask);
+            } else {
+                drawVisibleTrailSegmentClipped(southX, southY, southZ,
+                        northX, northY, northZ,
+                        body.x, body.y, body.z,
+                        selfClipRadius,
+                        occlusionMask);
+                northVisible = isVisiblePoint(northX, northY, northZ, occlusionMask);
+            }
+
+            if (!northVisible) {
+                continue;
+            }
+
+            Vector2 northScreen = camera.worldToScreen(northX, northY, northZ);
+            if (!isFiniteScreenPoint(northScreen)) {
+                continue;
+            }
+
+            float markerRadius = SPIN_AXIS_MARKER_SCALE * clamp(screenRadius * 0.18f,
+                    SPIN_AXIS_MARKER_MIN_RADIUS_PX,
+                    SPIN_AXIS_MARKER_MAX_RADIUS_PX);
+            int markerSegments = adaptiveSegments(markerRadius);
+
+            SpinAxisMarker marker = new SpinAxisMarker();
+            marker.screenX = northScreen.x;
+            marker.screenY = northScreen.y;
+            marker.radius = markerRadius;
+            marker.segments = markerSegments;
+            spinAxisMarkers.add(marker);
+        }
+        shapeRenderer.end();
+
+        if (spinAxisMarkers.isEmpty()) {
+            return;
+        }
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        for (SpinAxisMarker marker : spinAxisMarkers) {
+            shapeRenderer.setColor(0.98f, 0.85f, 0.48f, ORBIT_NORMAL_MARKER_ALPHA);
+            shapeRenderer.circle(marker.screenX, marker.screenY,
+                    marker.radius,
+                    marker.segments);
+        }
+        shapeRenderer.end();
+    }
+
+    private void renderPrimeMeridianOverlays(List<SimObject> objects, OrbitOcclusionMask occlusionMask,
+            float[] screenRadii) {
+        spinAxisMarkers.clear();
+        boolean topView = camera.getMode() == CameraMode.TOP_VIEW;
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        for (int objectIndex = 0; objectIndex < objects.size(); objectIndex++) {
+            SimObject obj = objects.get(objectIndex);
+            if (!(obj instanceof CelestialBody body) || !body.active) {
+                continue;
+            }
+
+            float screenRadius = objectIndex < screenRadii.length ? screenRadii[objectIndex] : 0f;
+            if (screenRadius < SPIN_AXIS_MIN_BODY_RADIUS_PX) {
+                continue;
+            }
+
+            double selfClipRadius = trailSelfClipRadius(body, screenRadius);
+            if (selfClipRadius <= 0.0) {
+                continue;
+            }
+
+            double halfLength = selfClipRadius * SPIN_AXIS_HALF_LENGTH_SCALE;
+            body.getPrimeMeridianAxis(scratchPrimeMeridian);
+
+            double southX = body.x - scratchPrimeMeridian[0] * halfLength;
+            double southY = body.y - scratchPrimeMeridian[1] * halfLength;
+            double southZ = body.z - scratchPrimeMeridian[2] * halfLength;
+            double northX = body.x + scratchPrimeMeridian[0] * halfLength;
+            double northY = body.y + scratchPrimeMeridian[1] * halfLength;
+            double northZ = body.z + scratchPrimeMeridian[2] * halfLength;
+
+            if (!topView && camera.depthOf(body.x, body.y, body.z) <= 0.0) {
+                continue;
+            }
+
+            shapeRenderer.setColor(0.42f, 0.86f, 0.98f, PRIME_MERIDIAN_LINE_ALPHA);
+
+            boolean northVisible;
+            if (topView) {
+                northVisible = drawTopViewSpinAxisSegments(body,
+                        selfClipRadius,
+                        halfLength,
+                        scratchPrimeMeridian[0],
+                        scratchPrimeMeridian[1],
+                        scratchPrimeMeridian[2],
+                        occlusionMask);
+            } else {
+                drawVisibleTrailSegmentClipped(southX, southY, southZ,
+                        northX, northY, northZ,
+                        body.x, body.y, body.z,
+                        selfClipRadius,
+                        occlusionMask,
+                        OcclusionVisibilityMode.CLEAR);
+                northVisible = isPointVisibleForMode(
+                        northX,
+                        northY,
+                        northZ,
+                        occlusionMask,
+                        OcclusionVisibilityMode.CLEAR);
+            }
+
+            if (!northVisible) {
+                continue;
+            }
+
+            Vector2 northScreen = camera.worldToScreen(northX, northY, northZ);
+            if (!isFiniteScreenPoint(northScreen)) {
+                continue;
+            }
+
+            float markerRadius = SPIN_AXIS_MARKER_SCALE * clamp(screenRadius * 0.18f,
+                    SPIN_AXIS_MARKER_MIN_RADIUS_PX,
+                    SPIN_AXIS_MARKER_MAX_RADIUS_PX);
+            int markerSegments = adaptiveSegments(markerRadius);
+
+            SpinAxisMarker marker = new SpinAxisMarker();
+            marker.screenX = northScreen.x;
+            marker.screenY = northScreen.y;
+            marker.radius = markerRadius;
+            marker.segments = markerSegments;
+            spinAxisMarkers.add(marker);
+        }
+        shapeRenderer.end();
+
+        if (spinAxisMarkers.isEmpty()) {
+            return;
+        }
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        for (SpinAxisMarker marker : spinAxisMarkers) {
+            shapeRenderer.setColor(0.70f, 0.94f, 1.0f, PRIME_MERIDIAN_MARKER_ALPHA);
+            shapeRenderer.circle(marker.screenX, marker.screenY,
+                    marker.radius,
+                    marker.segments);
+        }
+        shapeRenderer.end();
+    }
+
     private boolean drawTopViewSpinAxisSegments(CelestialBody body,
             double bodyRadius,
             double halfLength,
@@ -493,6 +682,34 @@ public class SimRenderer {
                 && Math.abs(point.x) < 1e6f && Math.abs(point.y) < 1e6f;
     }
 
+    private boolean isPointClearlyVisible(double wx,
+            double wy,
+            double wz,
+            OrbitOcclusionMask occlusionMask,
+            double cameraBiasMeters) {
+        if (isVisiblePoint(wx, wy, wz, occlusionMask)) {
+            return true;
+        }
+        if (cameraBiasMeters <= 0.0) {
+            return false;
+        }
+
+        double toCameraX = camera.getCamPosX() - wx;
+        double toCameraY = camera.getCamPosY() - wy;
+        double toCameraZ = camera.getCamPosZ() - wz;
+        double toCameraLen = Math.sqrt(toCameraX * toCameraX + toCameraY * toCameraY + toCameraZ * toCameraZ);
+        if (toCameraLen <= cameraBiasMeters) {
+            return false;
+        }
+
+        double invToCameraLen = 1.0 / toCameraLen;
+        return isVisiblePoint(
+                wx + toCameraX * invToCameraLen * cameraBiasMeters,
+                wy + toCameraY * invToCameraLen * cameraBiasMeters,
+                wz + toCameraZ * invToCameraLen * cameraBiasMeters,
+                occlusionMask);
+    }
+
     private static int adaptiveSegments(float screenRadius) {
         if (screenRadius < 3f) {
             return 8;
@@ -509,6 +726,14 @@ public class SimRenderer {
 
     private static float lerp(float a, float b, float t) {
         return a + (b - a) * t;
+    }
+
+    private double markerVisibilityBiasMeters(double wx, double wy, double wz) {
+        double bias = camera.screenToWorldSphereRadius(PRIME_MERIDIAN_VISIBILITY_BIAS_PX, wx, wy, wz);
+        if (!Double.isFinite(bias) || bias <= 0.0) {
+            return 1.0;
+        }
+        return Math.max(1.0, bias);
     }
 
     // -------------------------------------------------------------------------
@@ -585,6 +810,20 @@ public class SimRenderer {
             double cx, double cy, double cz,
             double radius,
             OrbitOcclusionMask occlusionMask) {
+        drawVisibleTrailSegmentClipped(wx0, wy0, wz0,
+                wx1, wy1, wz1,
+                cx, cy, cz,
+                radius,
+                occlusionMask,
+                OcclusionVisibilityMode.STANDARD);
+    }
+
+    private void drawVisibleTrailSegmentClipped(double wx0, double wy0, double wz0,
+            double wx1, double wy1, double wz1,
+            double cx, double cy, double cz,
+            double radius,
+            OrbitOcclusionMask occlusionMask,
+            OcclusionVisibilityMode visibilityMode) {
         double dx = wx1 - wx0;
         double dy = wy1 - wy0;
         double dz = wz1 - wz0;
@@ -613,7 +852,8 @@ public class SimRenderer {
         if (discriminant <= 0.0) {
             drawVisibleTrailSubSegment(wx0, wy0, wz0,
                     wx1, wy1, wz1,
-                    occlusionMask);
+                    occlusionMask,
+                    visibilityMode);
             return;
         }
 
@@ -627,7 +867,8 @@ public class SimRenderer {
             if (enterT <= 0.0 || enterT >= 1.0 || exitT <= 0.0 || exitT >= 1.0) {
                 drawVisibleTrailSubSegment(wx0, wy0, wz0,
                         wx1, wy1, wz1,
-                        occlusionMask);
+                        occlusionMask,
+                        visibilityMode);
                 return;
             }
 
@@ -640,10 +881,12 @@ public class SimRenderer {
 
             drawVisibleTrailSubSegment(wx0, wy0, wz0,
                     enterX, enterY, enterZ,
-                    occlusionMask);
+                    occlusionMask,
+                    visibilityMode);
             drawVisibleTrailSubSegment(exitX, exitY, exitZ,
                     wx1, wy1, wz1,
-                    occlusionMask);
+                    occlusionMask,
+                    visibilityMode);
             return;
         }
 
@@ -654,7 +897,8 @@ public class SimRenderer {
             double clipZ = lerp(wz0, wz1, clipT);
             drawVisibleTrailSubSegment(wx0, wy0, wz0,
                     clipX, clipY, clipZ,
-                    occlusionMask);
+                    occlusionMask,
+                    visibilityMode);
             return;
         }
 
@@ -664,13 +908,23 @@ public class SimRenderer {
         double clipZ = lerp(wz0, wz1, clipT);
         drawVisibleTrailSubSegment(clipX, clipY, clipZ,
                 wx1, wy1, wz1,
-                occlusionMask);
+                occlusionMask,
+                visibilityMode);
     }
 
     private void drawVisibleTrailSubSegment(double wx0, double wy0, double wz0,
             double wx1, double wy1, double wz1,
             OrbitOcclusionMask occlusionMask) {
+        drawVisibleTrailSubSegment(wx0, wy0, wz0,
+                wx1, wy1, wz1,
+                occlusionMask,
+                OcclusionVisibilityMode.STANDARD);
+    }
 
+    private void drawVisibleTrailSubSegment(double wx0, double wy0, double wz0,
+            double wx1, double wy1, double wz1,
+            OrbitOcclusionMask occlusionMask,
+            OcclusionVisibilityMode visibilityMode) {
         Vector2 s0 = camera.worldToScreen(wx0, wy0, wz0);
         Vector2 s1 = camera.worldToScreen(wx1, wy1, wz1);
         if (occlusionMask == null || !occlusionMask.isEnabled()
@@ -681,7 +935,8 @@ public class SimRenderer {
 
         drawVisibleTrailSegmentRecursive(wx0, wy0, wz0, s0.x, s0.y,
                 wx1, wy1, wz1, s1.x, s1.y,
-                occlusionMask, OCCLUSION_SUBDIVISION_DEPTH);
+                occlusionMask, OCCLUSION_SUBDIVISION_DEPTH,
+                visibilityMode);
     }
 
     private double trailSelfClipRadius(SimObject obj, float screenRadius) {
@@ -693,18 +948,19 @@ public class SimRenderer {
 
     private void drawVisibleTrailSegmentRecursive(double wx0, double wy0, double wz0, float sx0, float sy0,
             double wx1, double wy1, double wz1, float sx1, float sy1,
-            OrbitOcclusionMask occlusionMask, int depth) {
+            OrbitOcclusionMask occlusionMask, int depth,
+            OcclusionVisibilityMode visibilityMode) {
         if (!occlusionMask.segmentMayBeOccluded(sx0, sy0, sx1, sy1)) {
             shapeRenderer.line(sx0, sy0, sx1, sy1);
             return;
         }
 
-        boolean visible0 = occlusionMask.isPointVisible(wx0, wy0, wz0);
-        boolean visible1 = occlusionMask.isPointVisible(wx1, wy1, wz1);
+        boolean visible0 = isPointVisibleForMode(wx0, wy0, wz0, occlusionMask, visibilityMode);
+        boolean visible1 = isPointVisibleForMode(wx1, wy1, wz1, occlusionMask, visibilityMode);
         double wxMid = lerp(wx0, wx1, 0.5);
         double wyMid = lerp(wy0, wy1, 0.5);
         double wzMid = lerp(wz0, wz1, 0.5);
-        boolean visibleMid = occlusionMask.isPointVisible(wxMid, wyMid, wzMid);
+        boolean visibleMid = isPointVisibleForMode(wxMid, wyMid, wzMid, occlusionMask, visibilityMode);
 
         if (depth <= 0 || (visible0 == visibleMid && visibleMid == visible1)) {
             if (visibleMid) {
@@ -716,10 +972,28 @@ public class SimRenderer {
         Vector2 midScreen = camera.worldToScreen(wxMid, wyMid, wzMid);
         drawVisibleTrailSegmentRecursive(wx0, wy0, wz0, sx0, sy0,
                 wxMid, wyMid, wzMid, midScreen.x, midScreen.y,
-                occlusionMask, depth - 1);
+                occlusionMask, depth - 1,
+                visibilityMode);
         drawVisibleTrailSegmentRecursive(wxMid, wyMid, wzMid, midScreen.x, midScreen.y,
                 wx1, wy1, wz1, sx1, sy1,
-                occlusionMask, depth - 1);
+                occlusionMask, depth - 1,
+                visibilityMode);
+    }
+
+    private boolean isPointVisibleForMode(double wx,
+            double wy,
+            double wz,
+            OrbitOcclusionMask occlusionMask,
+            OcclusionVisibilityMode visibilityMode) {
+        if (visibilityMode == OcclusionVisibilityMode.CLEAR) {
+            return isPointClearlyVisible(
+                    wx,
+                    wy,
+                    wz,
+                    occlusionMask,
+                    markerVisibilityBiasMeters(wx, wy, wz));
+        }
+        return isVisiblePoint(wx, wy, wz, occlusionMask);
     }
 
     private static double lerp(double a, double b, double t) {
@@ -732,13 +1006,14 @@ public class SimRenderer {
      */
     private void computeScreenLayout(List<SimObject> objects, float[] sx, float[] sy, float[] sr) {
         int n = objects.size();
+        boolean visualScaleMode = getVisualScaleMode();
 
         for (int i = 0; i < n; i++) {
             SimObject obj = objects.get(i);
             Vector2 sc = camera.worldToScreen(obj.x, obj.y, obj.z);
             sx[i] = sc.x;
             sy[i] = sc.y;
-            sr[i] = desiredVisualRadius(obj);
+            sr[i] = desiredVisualRadius(obj, visualScaleMode);
         }
 
         if (!visualScaleMode)
@@ -752,7 +1027,7 @@ public class SimRenderer {
         }
 
         boolean anyOverlap = false;
-        boolean freeCam = camera.getMode() == WorldCamera.CameraMode.FREE_CAM;
+        boolean freeCam = camera.getMode() == CameraMode.FREE_CAM;
         if (freeCam) {
             // 3D world-space overlap: check if inflated spheres intersect.
             outer3d: for (int i = 0; i < n; i++) {
@@ -830,7 +1105,7 @@ public class SimRenderer {
             case STAR -> true;
             case PLANET -> true;
             case DWARF_PLANET -> cb.parent == null
-                    || cb.parent.bodyType == CelestialBody.BodyType.STAR;
+                    || cb.parent.bodyType == BodyType.STAR;
             default -> false;
         };
     }
@@ -842,7 +1117,7 @@ public class SimRenderer {
      * size, whichever is larger.
      * Overlap clamping in renderBodies may reduce this to trueScreenRadius.
      */
-    private float desiredVisualRadius(SimObject obj) {
+    private float desiredVisualRadius(SimObject obj, boolean visualScaleMode) {
         float trueRadius = camera.worldSphereRadiusToScreen(obj.radius, obj.x, obj.y, obj.z);
         if (!visualScaleMode) {
             return Math.max(VISUAL_SCALE_MIN_PX, trueRadius);
@@ -855,6 +1130,15 @@ public class SimRenderer {
             visualPx = (float) (VS_POW_BASE * Math.pow(radiusKm, VS_POW_EXP));
         }
         return Math.max(Math.max(VISUAL_SCALE_MIN_PX, visualPx), trueRadius);
+    }
+
+    private boolean getVisualScaleMode() {
+        boolean visualScaleMode = overlaySettings.isVisualScaleMode();
+        if (cachedVisualScaleMode != visualScaleMode) {
+            vsInhibited = false;
+            cachedVisualScaleMode = visualScaleMode;
+        }
+        return visualScaleMode;
     }
 
     private int getColor(SimObject obj) {

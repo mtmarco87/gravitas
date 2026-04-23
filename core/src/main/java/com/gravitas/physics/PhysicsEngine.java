@@ -1,10 +1,17 @@
 package com.gravitas.physics;
 
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.Universe;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.core.SimObject;
+import com.gravitas.physics.orbit.OrbitFrameUpdater;
+import com.gravitas.physics.orbit.RK4Integrator;
+import com.gravitas.physics.spin.SpinDynamicsEngine;
+import com.gravitas.settings.PhysicsSettings;
+import com.gravitas.settings.enums.SpinMode;
+import com.gravitas.util.GeometryUtils;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Main physics simulation engine.
@@ -56,7 +63,9 @@ public class PhysicsEngine {
     private static final double MAX_STEP_DT = 200.0; // seconds
 
     private final RK4Integrator integrator = new RK4Integrator();
-    private final List<SimObject> objects = new ArrayList<>();
+    private final OrbitFrameUpdater orbitFrameUpdater = new OrbitFrameUpdater();
+    private final SpinDynamicsEngine spinDynamicsEngine = new SpinDynamicsEngine();
+    private final Universe universe;
     private SimObject[] objectArray = new SimObject[0];
 
     /** Simulation clock (seconds since epoch 2000-Jan-1 12:00 TDB). */
@@ -72,37 +81,9 @@ public class PhysicsEngine {
 
     private CollisionListener collisionListener;
 
-    // -------------------------------------------------------------------------
-    // Object management
-    // -------------------------------------------------------------------------
-
-    public void addObject(SimObject obj) {
-        objects.add(obj);
+    public PhysicsEngine(Universe universe) {
+        this.universe = Objects.requireNonNull(universe, "universe");
         rebuildArray();
-    }
-
-    public void removeObject(SimObject obj) {
-        objects.remove(obj);
-        rebuildArray();
-    }
-
-    /** Removes all objects and resets simulation time to zero. */
-    public void clearObjects() {
-        objects.clear();
-        rebuildArray();
-        simulationTime = 0.0;
-    }
-
-    public List<SimObject> getObjects() {
-        return objects;
-    }
-
-    public void setCollisionListener(CollisionListener listener) {
-        this.collisionListener = listener;
-    }
-
-    private void rebuildArray() {
-        objectArray = objects.toArray(new SimObject[0]);
     }
 
     // -------------------------------------------------------------------------
@@ -146,16 +127,22 @@ public class PhysicsEngine {
         // 1. Integrate positions/velocities.
         integrator.step(objectArray, objectArray.length, dt);
 
-        // 2. Per-object tick (rotation, thrust, heat shield, etc.).
+        // 2. Update runtime orbital frames from the integrated state.
+        orbitFrameUpdater.updateObjects(objectArray, objectArray.length);
+
+        // 3. Update runtime tidal/face-lock dynamics from current orbital/body state.
+        spinDynamicsEngine.update(objectArray, objectArray.length, dt, simulationTime + dt);
+
+        // 4. Per-object tick (thrust, heat shield, etc.).
         for (SimObject obj : objectArray) {
             if (obj.active)
                 obj.update(dt);
         }
 
-        // 3. Collision detection.
+        // 5. Collision detection.
         detectCollisions();
 
-        // 4. Advance simulation clock.
+        // 6. Advance simulation clock.
         simulationTime += dt;
     }
 
@@ -207,7 +194,9 @@ public class PhysicsEngine {
     // -------------------------------------------------------------------------
 
     public void setTimeWarpFactor(double factor) {
-        if (factor < 1.0)
+        if (factor < 0.0)
+            factor = 0.0;
+        else if (factor > 0.0 && factor < 1.0)
             factor = 1.0;
         this.timeWarpFactor = factor;
     }
@@ -247,20 +236,75 @@ public class PhysicsEngine {
     // -------------------------------------------------------------------------
 
     public CelestialBody nearestBodyTo(double wx, double wy, double wz) {
-        CelestialBody nearest = null;
-        double minDist = Double.MAX_VALUE;
-        for (SimObject obj : objectArray) {
-            if (!(obj instanceof CelestialBody cb) || !obj.active)
-                continue;
-            double dx = cb.x - wx;
-            double dy = cb.y - wy;
-            double dz = cb.z - wz;
-            double d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (d < minDist) {
-                minDist = d;
-                nearest = cb;
-            }
+        SimObject nearest = GeometryUtils.findNearest(getSimObjects(),
+                object -> object instanceof CelestialBody body && body.active,
+                object -> object.x,
+                object -> object.y,
+                object -> object.z,
+                wx, wy, wz);
+        return nearest instanceof CelestialBody body ? body : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Object management
+    // -------------------------------------------------------------------------
+
+    public void addSimObject(SimObject obj) {
+        universe.addSimObject(obj);
+        rebuildArray();
+    }
+
+    public void removeSimObject(SimObject obj) {
+        universe.removeSimObject(obj);
+        rebuildArray();
+    }
+
+    /** Removes all objects and resets simulation time to zero. */
+    public void clearSimObjects() {
+        universe.clearSimObjects();
+        rebuildArray();
+        simulationTime = 0.0;
+    }
+
+    public List<SimObject> getSimObjects() {
+        return universe.getSimObjects();
+    }
+
+    public Universe getUniverse() {
+        return universe;
+    }
+
+    public void reset() {
+        simulationTime = 0.0;
+        rebuildArray();
+    }
+
+    public void setCollisionListener(CollisionListener listener) {
+        this.collisionListener = listener;
+    }
+
+    private void rebuildArray() {
+        objectArray = universe.getSimObjects().toArray(new SimObject[0]);
+    }
+
+    public PhysicsSettings getPhysicsSettings() {
+        return spinDynamicsEngine.getSettings();
+    }
+
+    public void applyPhysicsSettings(PhysicsSettings settings) {
+        spinDynamicsEngine.applySettings(settings);
+        syncSpinStateToCurrentMode();
+    }
+
+    public void resetPhysicsSettingsToDefaults() {
+        spinDynamicsEngine.resetSettingsToDefaults();
+        syncSpinStateToCurrentMode();
+    }
+
+    private void syncSpinStateToCurrentMode() {
+        if (spinDynamicsEngine.getSettings().getSpinMode() == SpinMode.ORBIT_RELATIVE) {
+            orbitFrameUpdater.updateObjects(objectArray, objectArray.length);
         }
-        return nearest;
+        spinDynamicsEngine.syncObjects(objectArray, objectArray.length, simulationTime);
     }
 }

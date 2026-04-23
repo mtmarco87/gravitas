@@ -3,10 +3,12 @@
 verify_jpl.py — Verify solar_system.json against NASA/JPL official data.
 
 Orbital elements:  fetched from JPL Horizons API (osculating, J2000.0 epoch, ecliptic plane).
-Physical data:     hardcoded from NASA Planetary Fact Sheets & JPL SSD.
-Spin-axis data:    hardcoded from NAIF pck00011.tpc at J2000 where available,
-                   plus explicit documented fallbacks for bodies without a
-                   published NAIF/JPL pole solution.
+Physical data:     hardcoded from NASA Planetary Fact Sheets & JPL SSD,
+                   with rotation periods overridden by live NAIF PCK data
+                   where a body orientation model is available.
+Spin-axis data:    evaluated directly from the live NAIF pck00011.tpc kernel
+                   at J2000, plus explicit documented fallbacks for bodies
+                   without a published NAIF/JPL pole solution.
 
 Usage:  python3 verify_jpl.py
 """
@@ -18,6 +20,33 @@ import urllib.request, urllib.parse
 AU_M = 149_597_870_700.0  # 1 AU  → metres
 DEG2RAD = math.pi / 180.0
 TWO_PI = 2.0 * math.pi
+PCK_URL = "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc"
+SECONDS_PER_DAY = 86_400.0
+
+PCK_BODY_IDS = {
+    "Sun": "10",
+    "Mercury": "199",
+    "Venus": "299",
+    "Earth": "399",
+    "Moon": "301",
+    "Mars": "499",
+    "Phobos": "401",
+    "Deimos": "402",
+    "Jupiter": "599",
+    "Io": "501",
+    "Europa": "502",
+    "Ganymede": "503",
+    "Callisto": "504",
+    "Saturn": "699",
+    "Titan": "606",
+    "Enceladus": "602",
+    "Uranus": "799",
+    "Neptune": "899",
+    "Triton": "801",
+    "Pluto": "999",
+    "Charon": "901",
+    "Ceres": "2000001",
+}
 
 # ─── Horizons body table: name → (COMMAND, CENTER) ─────────────────────
 HORIZONS = {
@@ -293,6 +322,178 @@ def query_horizons(cmd, center):
     }, None
 
 
+def download_pck_text(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "GravitasVerify/1.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8")
+
+
+def parse_pck_assignments(text):
+    assignments = {}
+    in_data = False
+    pending = []
+
+    def paren_balance(parts):
+        joined = " ".join(parts)
+        return joined.count("(") - joined.count(")")
+
+    def parse_assignment(statement):
+        if "=" not in statement:
+            return
+        key, raw_value = statement.split("=", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if raw_value.startswith("(") and raw_value.endswith(")"):
+            raw_value = raw_value[1:-1]
+        tokens = re.findall(
+            r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[EeDd][+-]?\d+)?",
+            raw_value,
+        )
+        if not tokens:
+            return
+        values = [float(tok.replace("D", "E").replace("d", "e")) for tok in tokens]
+        assignments[key] = values if len(values) > 1 else values[0]
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if lower == "\\begindata":
+            in_data = True
+            continue
+        if lower == "\\begintext":
+            in_data = False
+            pending = []
+            continue
+        if not in_data or not line:
+            continue
+
+        if pending:
+            pending.append(line)
+            if paren_balance(pending) <= 0:
+                parse_assignment(" ".join(pending))
+                pending = []
+            continue
+
+        if "=" not in line:
+            continue
+        if "(" in line and paren_balance([line]) > 0:
+            pending = [line]
+            continue
+        parse_assignment(line)
+
+    if pending:
+        parse_assignment(" ".join(pending))
+
+    return assignments
+
+
+def get_phase_angle_polynomials(assignments, system_id):
+    if not system_id:
+        return []
+    values = assignments.get(f"BODY{system_id}_NUT_PREC_ANGLES")
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        values = [values]
+
+    max_phase_degree = assignments.get(f"BODY{system_id}_MAX_PHASE_DEGREE", 1)
+    if isinstance(max_phase_degree, list):
+        max_phase_degree = max_phase_degree[0]
+    terms_per_angle = int(max_phase_degree) + 1
+
+    if len(values) % terms_per_angle != 0:
+        for candidate in (2, 3):
+            if len(values) % candidate == 0:
+                terms_per_angle = candidate
+                break
+        else:
+            raise ValueError(
+                f"Cannot infer phase-angle polynomial degree for BODY{system_id}_NUT_PREC_ANGLES"
+            )
+
+    return [values[i : i + terms_per_angle] for i in range(0, len(values), terms_per_angle)]
+
+
+def phase_angle_system_id(assignments, body_id):
+    body_number = int(body_id)
+    if body_number < 100:
+        return None
+    candidate = str(body_number // 100)
+    return candidate if f"BODY{candidate}_NUT_PREC_ANGLES" in assignments else None
+
+
+def evaluate_pck_orientation(assignments, body_id):
+    pole_ra = assignments.get(f"BODY{body_id}_POLE_RA")
+    pole_dec = assignments.get(f"BODY{body_id}_POLE_DEC")
+    pm = assignments.get(f"BODY{body_id}_PM")
+    if pole_ra is None or pole_dec is None or pm is None:
+        return None
+
+    if not isinstance(pole_ra, list):
+        pole_ra = [pole_ra]
+    if not isinstance(pole_dec, list):
+        pole_dec = [pole_dec]
+    if not isinstance(pm, list):
+        pm = [pm]
+
+    phase_polys = get_phase_angle_polynomials(assignments, phase_angle_system_id(assignments, body_id))
+    phase_angles_rad = [poly[0] * DEG2RAD for poly in phase_polys]
+    phase_rates_deg_per_day = [poly[1] / 36525.0 if len(poly) > 1 else 0.0 for poly in phase_polys]
+
+    nut_ra = assignments.get(f"BODY{body_id}_NUT_PREC_RA", [])
+    nut_dec = assignments.get(f"BODY{body_id}_NUT_PREC_DEC", [])
+    nut_pm = assignments.get(f"BODY{body_id}_NUT_PREC_PM", [])
+    if not isinstance(nut_ra, list):
+        nut_ra = [nut_ra]
+    if not isinstance(nut_dec, list):
+        nut_dec = [nut_dec]
+    if not isinstance(nut_pm, list):
+        nut_pm = [nut_pm]
+
+    ra_deg = pole_ra[0]
+    for coeff, angle_rad in zip(nut_ra, phase_angles_rad):
+        ra_deg += coeff * math.sin(angle_rad)
+
+    dec_deg = pole_dec[0]
+    for coeff, angle_rad in zip(nut_dec, phase_angles_rad):
+        dec_deg += coeff * math.cos(angle_rad)
+
+    pm_rate_deg_per_day = pm[1] if len(pm) > 1 else 0.0
+    for coeff, angle_rad, angle_rate_deg_per_day in zip(
+        nut_pm, phase_angles_rad, phase_rates_deg_per_day
+    ):
+        pm_rate_deg_per_day += coeff * math.cos(angle_rad) * DEG2RAD * angle_rate_deg_per_day
+
+    return {
+        "rightAscension": ra_deg * DEG2RAD,
+        "declination": dec_deg * DEG2RAD,
+        "primeMeridianRateDegPerDay": pm_rate_deg_per_day,
+    }
+
+
+def build_pck_references(assignments):
+    spin_axis_ref = {}
+    rotation_period_ref = {}
+
+    for name, body_id in PCK_BODY_IDS.items():
+        orientation = evaluate_pck_orientation(assignments, body_id)
+        if orientation is None:
+            continue
+
+        spin_axis_ref[name] = {
+            "type": "absolute",
+            "rightAscension": orientation["rightAscension"],
+            "declination": orientation["declination"],
+        }
+
+        pm_rate = orientation["primeMeridianRateDegPerDay"]
+        if abs(pm_rate) > 1e-12:
+            rotation_period_ref[name] = 360.0 * SECONDS_PER_DAY / pm_rate
+
+    spin_axis_ref.update(PCK_SPIN_AXIS_FALLBACKS)
+    return spin_axis_ref, rotation_period_ref
+
+
 # ─── Utilities ──────────────────────────────────────────────────────────
 
 
@@ -309,11 +510,15 @@ def pct_diff(v, r):
 
 
 def fmt_val(v):
+    if v is None:
+        return "<missing>"
+    if isinstance(v, str):
+        return v
     if v == 0:
-        return "0"
+        return "0.00000000"
     if abs(v) >= 1e6 or (abs(v) < 0.001 and v != 0):
-        return f"{v:.5e}"
-    return f"{v:.6f}"
+        return f"{v:.8e}"
+    return f"{v:.8f}"
 
 
 # ─── Comparison ─────────────────────────────────────────────────────────
@@ -330,35 +535,7 @@ SCALAR_FIELDS = [
     "beltOuterRadius",
 ]
 
-SPIN_AXIS_REF = {
-    "Sun": dict(type="absolute", rightAscension=4.99391059, declination=1.11474179),
-    "Mercury": dict(type="absolute", rightAscension=4.90455497, declination=1.07190269),
-    "Venus": dict(type="absolute", rightAscension=4.76056007, declination=1.17216313),
-    "Earth": dict(type="absolute", rightAscension=0.0, declination=1.57079633),
-    "Moon": dict(type="absolute", rightAscension=4.65754608, declination=1.14565337),
-    "Mars": dict(type="absolute", rightAscension=5.53739219, declination=0.95002662),
-    "Phobos": dict(type="absolute", rightAscension=5.54439995, declination=0.92303959),
-    "Deimos": dict(type="absolute", rightAscension=5.52670826, declination=0.93392429),
-    "Jupiter": dict(type="absolute", rightAscension=4.67848079, declination=1.12566424),
-    "Io": dict(type="absolute", rightAscension=4.67835506, declination=1.12573737),
-    "Europa": dict(type="absolute", rightAscension=4.67887866, declination=1.12591190),
-    "Ganymede": dict(
-        type="absolute", rightAscension=4.68731511, declination=1.12616330
-    ),
-    "Callisto": dict(
-        type="absolute", rightAscension=4.69004877, declination=1.13149695
-    ),
-    "Saturn": dict(type="absolute", rightAscension=0.70841169, declination=1.45799570),
-    "Titan": dict(type="absolute", rightAscension=0.68910311, declination=1.45609154),
-    "Enceladus": dict(
-        type="absolute", rightAscension=0.70965087, declination=1.45769899
-    ),
-    "Uranus": dict(type="absolute", rightAscension=4.49092415, declination=-0.26485371),
-    "Neptune": dict(type="absolute", rightAscension=5.22481765, declination=0.75852009),
-    "Triton": dict(type="absolute", rightAscension=5.20895231, declination=0.35434305),
-    "Pluto": dict(type="absolute", rightAscension=2.32116573, declination=-0.10756464),
-    "Charon": dict(type="absolute", rightAscension=2.32116573, declination=-0.10756464),
-    "Ceres": dict(type="absolute", rightAscension=5.08620360, declination=1.16525162),
+PCK_SPIN_AXIS_FALLBACKS = {
     "Makemake": dict(
         type="orbital-relative",
         tilt=0.0,
@@ -416,6 +593,15 @@ def main():
     with open(json_path) as f:
         ss = json.load(f)
 
+    try:
+        pck_text = download_pck_text(PCK_URL)
+        pck_assignments = parse_pck_assignments(pck_text)
+        spin_axis_ref, pck_rotation_period_ref = build_pck_references(pck_assignments)
+    except Exception as exc:
+        print(f"\nFATAL: failed to download or parse NAIF PCK {PCK_URL}")
+        print(f"       {exc}\n")
+        return 1
+
     bodies = {b["name"]: b for b in ss["bodies"]}
     body_order = [b["name"] for b in ss["bodies"]]
 
@@ -428,11 +614,14 @@ def main():
     print("=" * W)
     print("  SOLAR SYSTEM DATA VERIFICATION  —  vs NASA/JPL Reference")
     print("  Epoch: J2000.0  (2000-Jan-1 12:00 TDB)")
+    print(f"  Live PCK: {PCK_URL}")
     print("=" * W)
 
     # ── Part 1: Physical data ───────────────────────────────────────────
     print(f"\n{'─' * W}")
-    print("  PART 1 — PHYSICAL DATA  (vs NASA Planetary Fact Sheets / JPL SSD)")
+    print(
+        "  PART 1 — PHYSICAL DATA  (vs NASA Planetary Fact Sheets / JPL SSD; rotationPeriod from live PCK when available)"
+    )
     print(f"{'─' * W}")
 
     for name in body_order:
@@ -448,6 +637,8 @@ def main():
             combined.update(ref)
         if belt_ref:
             combined.update(belt_ref)
+        if name in pck_rotation_period_ref:
+            combined["rotationPeriod"] = pck_rotation_period_ref[name]
 
         for field in SCALAR_FIELDS:
             if field not in combined:
@@ -493,7 +684,7 @@ def main():
     spin_tol_deg = 0.05
 
     for name in body_order:
-        ref = SPIN_AXIS_REF.get(name)
+        ref = spin_axis_ref.get(name)
         if not ref:
             continue
         body = bodies[name]

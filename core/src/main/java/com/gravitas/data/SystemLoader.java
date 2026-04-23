@@ -3,9 +3,14 @@ package com.gravitas.data;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.JsonReader;
 import com.badlogic.gdx.utils.JsonValue;
-import com.gravitas.entities.Belt;
-import com.gravitas.entities.CelestialBody;
-import com.gravitas.physics.PhysicsEngine;
+import com.gravitas.entities.Universe;
+import com.gravitas.entities.bodies.Belt;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.enums.BodyType;
+import com.gravitas.entities.bodies.celestial_body.properties.CloudProfile;
+import com.gravitas.entities.regions.SpaceRegion;
+import com.gravitas.entities.regions.StellarSystem;
+import com.gravitas.util.OrbitUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -38,9 +43,6 @@ import java.util.Map;
 public class SystemLoader {
 
     private static final String TAG = "SystemLoader";
-    private static final double J2000_ECLIPTIC_OBLIQUITY = Math.toRadians(23.43929111);
-    private static final double COS_J2000_ECLIPTIC_OBLIQUITY = Math.cos(J2000_ECLIPTIC_OBLIQUITY);
-    private static final double SIN_J2000_ECLIPTIC_OBLIQUITY = Math.sin(J2000_ECLIPTIC_OBLIQUITY);
 
     /**
      * Parsed spin-axis authoring data, converted to a resolved runtime vector
@@ -49,7 +51,7 @@ public class SystemLoader {
     private static final class SpinAxisSpec {
         enum Type {
             ABSOLUTE,
-            ORBITAL_RELATIVE
+            ORBIT_RELATIVE
         }
 
         final Type type;
@@ -57,60 +59,56 @@ public class SystemLoader {
         final double declination;
         final double tilt;
         final double azimuth;
+        final double initialRotationPhase;
 
-        private SpinAxisSpec(Type type, double rightAscension, double declination, double tilt, double azimuth) {
+        private SpinAxisSpec(Type type, double rightAscension, double declination, double tilt, double azimuth,
+                double initialRotationPhase) {
             this.type = type;
             this.rightAscension = rightAscension;
             this.declination = declination;
             this.tilt = tilt;
             this.azimuth = azimuth;
+            this.initialRotationPhase = initialRotationPhase;
         }
 
-        static SpinAxisSpec absolute(double rightAscension, double declination) {
-            return new SpinAxisSpec(Type.ABSOLUTE, rightAscension, declination, 0.0, 0.0);
+        static SpinAxisSpec absolute(double rightAscension, double declination, double initialRotationPhase) {
+            return new SpinAxisSpec(Type.ABSOLUTE, rightAscension, declination, 0.0, 0.0, initialRotationPhase);
         }
 
-        static SpinAxisSpec orbitalRelative(double tilt, double azimuth) {
-            return new SpinAxisSpec(Type.ORBITAL_RELATIVE, 0.0, 0.0, tilt, azimuth);
+        static SpinAxisSpec orbitRelative(double tilt, double azimuth, double initialRotationPhase) {
+            return new SpinAxisSpec(Type.ORBIT_RELATIVE, 0.0, 0.0, tilt, azimuth, initialRotationPhase);
         }
-    }
-
-    /** Belt data collected during load (main asteroid belt, Kuiper belt, etc.). */
-    private final List<Belt> belts = new ArrayList<>();
-
-    /** Returns belt data collected during the last {@link #load} call. */
-    public List<Belt> getBelts() {
-        return belts;
     }
 
     /**
      * Loads a system JSON placing the root body at the origin (0,0,0).
      *
-     * @param engine   the PhysicsEngine to populate
+     * @param universe the universe to populate
      * @param jsonPath internal asset path to the system JSON file
      * @return list of loaded CelestialBody instances in load order
      */
-    public List<CelestialBody> load(PhysicsEngine engine, String jsonPath) {
-        return load(engine, jsonPath, false, 0, 0, 0);
+    public List<CelestialBody> load(Universe universe, StellarSystem system, String jsonPath) {
+        return load(universe, system, jsonPath, false, 0, 0, 0);
     }
 
     /**
      * Loads a system JSON with flat-mode support, placing the root body at the
      * origin.
      *
-     * @param engine   the PhysicsEngine to populate
+     * @param universe the universe to populate
      * @param jsonPath internal asset path to the system JSON file
      * @param flatMode when true, inclination is forced to zero (legacy 2D)
      * @return list of loaded CelestialBody instances in load order
      */
-    public List<CelestialBody> load(PhysicsEngine engine, String jsonPath, boolean flatMode) {
-        return load(engine, jsonPath, flatMode, 0, 0, 0);
+    public List<CelestialBody> load(Universe universe, StellarSystem system, String jsonPath, boolean flatMode) {
+        return load(universe, system, jsonPath, flatMode, 0, 0, 0);
     }
 
     /**
      * Loads a system JSON, placing the root body at the given origin offset.
      *
-     * @param engine   the PhysicsEngine to populate
+     * @param universe the universe to populate
+     * @param system   the stellar system to populate
      * @param jsonPath internal asset path to the system JSON file
      * @param flatMode when true, inclination is forced to zero (legacy 2D)
      * @param ox       origin X offset (metres)
@@ -118,7 +116,7 @@ public class SystemLoader {
      * @param oz       origin Z offset (metres)
      * @return list of loaded CelestialBody instances in load order
      */
-    public List<CelestialBody> load(PhysicsEngine engine, String jsonPath,
+    public List<CelestialBody> load(Universe universe, StellarSystem system, String jsonPath,
             boolean flatMode, double ox, double oy, double oz) {
         JsonValue root = new JsonReader().parse(Gdx.files.internal(jsonPath));
         JsonValue bodiesArray = root.get("bodies");
@@ -143,15 +141,26 @@ public class SystemLoader {
             if (statistical) {
                 // Collect belt rendering data.
                 String beltParent = jb.getString("parent", "Sun");
+                CelestialBody parent = byName.get(beltParent);
                 double beltInner = jb.getDouble("beltInnerRadius", 0);
                 double beltOuter = jb.getDouble("beltOuterRadius", 0);
                 int beltCount = jb.getInt("beltParticleCount", 400);
+                if (parent == null) {
+                    Gdx.app.error(TAG, "Parent '" + beltParent + "' not found for belt " + name);
+                    continue;
+                }
                 if (beltInner > 0 && beltOuter > beltInner) {
-                    belts.add(new Belt(name, beltParent, beltInner, beltOuter, beltCount, body.color.base));
+                    Belt belt = new Belt(name, parent, beltInner, beltOuter, beltCount, body.color.base);
+                    belt.sourceRegion = system;
+                    belt.authoredId = buildAuthoredId(system, name);
+                    universe.addBelt(belt);
                     Gdx.app.log(TAG, "Loaded belt: " + name + " (" + beltCount + " particles)");
                 }
                 continue; // belt rendered separately, not physics-simulated
             }
+
+            body.sourceRegion = system;
+            body.authoredId = buildAuthoredId(system, name);
 
             String parentName = jb.getString("parent", null);
             if (parentName != null && !parentName.isEmpty()) {
@@ -169,7 +178,7 @@ public class SystemLoader {
                 body.z = oz;
             }
 
-            engine.addObject(body);
+            universe.addObject(body);
             loaded.add(body);
             Gdx.app.log(TAG, "Loaded: " + body.name + " (" + body.bodyType + ")");
         }
@@ -190,8 +199,9 @@ public class SystemLoader {
         JsonValue ring = jb.get("ring");
         JsonValue clouds = jb.get("clouds");
         JsonValue spinAxis = jb.get("spinAxis");
+        JsonValue spinPhysics = jb.get("spinPhysics");
 
-        CelestialBody.BodyType bodyType = CelestialBody.BodyType.valueOf(typeStr);
+        BodyType bodyType = BodyType.valueOf(typeStr);
         CelestialBody body = new CelestialBody(name, bodyType, mass, radius);
 
         body.semiMajorAxis = jb.getDouble("semiMajorAxis", 0);
@@ -201,7 +211,8 @@ public class SystemLoader {
         body.meanAnomalyAtEpoch = jb.getDouble("meanAnomalyAtEpoch", 0);
         body.argumentOfPeriapsis = jb.getDouble("argumentOfPeriapsis", 0);
         body.rotationPeriod = jb.getDouble("rotationPeriod", 0);
-        resolveSpinAxis(body, parseSpinAxisSpec(body, jb, spinAxis));
+        double[] orbitNormal = resolveReferenceOrbitNormal(body);
+        resolveSpinState(body, jb, spinAxis, spinPhysics, orbitNormal);
         body.atmosphereScaleHeight = jb.getDouble("atmosphereScaleHeight", 0);
         body.atmosphereDensitySeaLevel = jb.getDouble("atmosphereDensitySeaLevel", 0);
         body.color.base = parseOptionalColor(color, "base", "FFFFFF");
@@ -228,6 +239,10 @@ public class SystemLoader {
         return body;
     }
 
+    private String buildAuthoredId(SpaceRegion sourceRegion, String name) {
+        return sourceRegion.getId() + ":" + name;
+    }
+
     private void parseSurfaceTexture(CelestialBody body, JsonValue textureJson) {
         if (textureJson == null) {
             return;
@@ -247,30 +262,30 @@ public class SystemLoader {
         Gdx.app.error(TAG, "Invalid texture definition for " + body.name + "; expected string or object");
     }
 
-    private CelestialBody.CloudProfile.ProceduralPreset parseCloudProceduralPreset(JsonValue clouds,
+    private CloudProfile.ProceduralPreset parseCloudProceduralPreset(JsonValue clouds,
             boolean hasTexture) {
         if (clouds == null || !clouds.has("procedural")) {
             return hasTexture
-                    ? CelestialBody.CloudProfile.ProceduralPreset.NONE
-                    : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+                    ? CloudProfile.ProceduralPreset.NONE
+                    : CloudProfile.ProceduralPreset.NATURAL;
         }
 
         JsonValue procedural = clouds.get("procedural");
         if (procedural.isString()) {
             String preset = procedural.asString().trim().toLowerCase(Locale.ROOT);
             return switch (preset) {
-                case "", "light" -> CelestialBody.CloudProfile.ProceduralPreset.LIGHT;
-                case "medium" -> CelestialBody.CloudProfile.ProceduralPreset.MEDIUM;
-                case "heavy" -> CelestialBody.CloudProfile.ProceduralPreset.HEAVY;
-                case "natural" -> CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
-                case "none" -> CelestialBody.CloudProfile.ProceduralPreset.NONE;
+                case "", "light" -> CloudProfile.ProceduralPreset.LIGHT;
+                case "medium" -> CloudProfile.ProceduralPreset.MEDIUM;
+                case "heavy" -> CloudProfile.ProceduralPreset.HEAVY;
+                case "natural" -> CloudProfile.ProceduralPreset.NATURAL;
+                case "none" -> CloudProfile.ProceduralPreset.NONE;
                 default -> {
                     Gdx.app.error(TAG,
                             "Unknown cloud procedural preset '" + procedural.asString()
                                     + "'; using contextual default");
                     yield hasTexture
-                            ? CelestialBody.CloudProfile.ProceduralPreset.NONE
-                            : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+                            ? CloudProfile.ProceduralPreset.NONE
+                            : CloudProfile.ProceduralPreset.NATURAL;
                 }
             };
         }
@@ -278,164 +293,146 @@ public class SystemLoader {
         Gdx.app.error(TAG,
                 "Invalid clouds.procedural value; expected one of: natural, light, medium, heavy, none. Using contextual default");
         return hasTexture
-                ? CelestialBody.CloudProfile.ProceduralPreset.NONE
-                : CelestialBody.CloudProfile.ProceduralPreset.NATURAL;
+                ? CloudProfile.ProceduralPreset.NONE
+                : CloudProfile.ProceduralPreset.NATURAL;
     }
 
-    private SpinAxisSpec parseSpinAxisSpec(CelestialBody body, JsonValue bodyJson, JsonValue spinAxisJson) {
+    private SpinAxisSpec parseSpinAxisSpec(CelestialBody body, JsonValue spinAxisJson) {
         if (spinAxisJson == null) {
-            Gdx.app.error(TAG, "Missing spinAxis for " + body.name + "; using orbital-relative zero-tilt fallback");
-            return SpinAxisSpec.orbitalRelative(0.0, 0.0);
+            Gdx.app.error(TAG, "Missing spinAxis for " + body.name + "; using orbit-relative zero-tilt fallback");
+            return SpinAxisSpec.orbitRelative(0.0, 0.0, 0.0);
         }
 
         String type = spinAxisJson.getString("type", "absolute").toLowerCase(Locale.ROOT);
+        double initialRotationPhase = spinAxisJson.getDouble("initialRotationPhase", 0.0);
         switch (type) {
             case "absolute":
                 return SpinAxisSpec.absolute(
                         spinAxisJson.getDouble("rightAscension", 0.0),
-                        spinAxisJson.getDouble("declination", Math.PI * 0.5));
-            case "orbital-relative":
-                return SpinAxisSpec.orbitalRelative(
+                        spinAxisJson.getDouble("declination", Math.PI * 0.5),
+                        initialRotationPhase);
+            case "orbit-relative":
+                return SpinAxisSpec.orbitRelative(
                         spinAxisJson.getDouble("tilt", 0.0),
-                        spinAxisJson.getDouble("azimuth", 0.0));
+                        spinAxisJson.getDouble("azimuth", 0.0),
+                        initialRotationPhase);
             default:
                 Gdx.app.error(TAG,
                         "Unknown spinAxis.type '" + type + "' for " + body.name
-                                + "; expected 'absolute' or 'orbital-relative', using zero-tilt fallback");
-                return SpinAxisSpec.orbitalRelative(0.0, 0.0);
+                                + "; expected 'absolute' or 'orbit-relative', using zero-tilt fallback");
+                return SpinAxisSpec.orbitRelative(0.0, 0.0, initialRotationPhase);
         }
     }
 
-    private void resolveSpinAxis(CelestialBody body, SpinAxisSpec spec) {
-        if (spec.type == SpinAxisSpec.Type.ABSOLUTE) {
-            resolveAbsoluteSpinAxis(body, spec.rightAscension, spec.declination);
+    private void resolveSpinState(CelestialBody body,
+            JsonValue bodyJson,
+            JsonValue spinAxisJson,
+            JsonValue spinPhysicsJson,
+            double[] orbitNormal) {
+        SpinAxisSpec spec = parseSpinAxisSpec(body, spinAxisJson);
+        resolveSpinAxis(body, spec, orbitNormal);
+        body.advanceRotation(spec.initialRotationPhase);
+        body.setSpinAngularSpeed(body.rotationPeriod != 0.0 ? (Math.PI * 2.0) / body.rotationPeriod : 0.0);
+        parseSpinPhysics(body, spinPhysicsJson);
+        captureSpinReference(body);
+    }
+
+    private void parseSpinPhysics(CelestialBody body, JsonValue spinPhysicsJson) {
+        if (spinPhysicsJson == null) {
+            body.setPrincipalInertia(0.0, 0.0, 0.0);
+            body.spinPhysics.preferredLockPhase = 0.0;
             return;
         }
-        resolveOrbitalRelativeSpinAxis(body, spec.tilt, spec.azimuth);
+        body.spinPhysics.inertiaFactor = spinPhysicsJson.getDouble("inertiaFactor", 0.0);
+        body.spinPhysics.k2OverQ = spinPhysicsJson.getDouble("k2OverQ", 0.0);
+        body.spinPhysics.preferredLockPhase = spinPhysicsJson.getDouble("preferredLockPhase", 0.0);
+
+        double inertia = body.spinPhysics.inertiaFactor > 0.0
+                ? body.spinPhysics.inertiaFactor * body.mass * body.radius * body.radius
+                : 0.0;
+        body.setPrincipalInertia(inertia, inertia, inertia);
     }
 
-    private void resolveAbsoluteSpinAxis(CelestialBody body, double rightAscension, double declination) {
-        double cosDec = Math.cos(declination);
-        double eqX = cosDec * Math.cos(rightAscension);
-        double eqY = cosDec * Math.sin(rightAscension);
-        double eqZ = Math.sin(declination);
+    private void captureSpinReference(CelestialBody body) {
+        double[] spinAxis = new double[3];
+        body.getSpinAxis(spinAxis);
+        body.spinReference.inertialAxisX = spinAxis[0];
+        body.spinReference.inertialAxisY = spinAxis[1];
+        body.spinReference.inertialAxisZ = spinAxis[2];
 
-        double worldX = eqX;
-        double worldY = COS_J2000_ECLIPTIC_OBLIQUITY * eqY + SIN_J2000_ECLIPTIC_OBLIQUITY * eqZ;
-        double worldZ = -SIN_J2000_ECLIPTIC_OBLIQUITY * eqY + COS_J2000_ECLIPTIC_OBLIQUITY * eqZ;
-        setResolvedSpinAxis(body, worldX, worldY, worldZ);
-    }
-
-    private void resolveOrbitalRelativeSpinAxis(CelestialBody body, double tilt, double azimuth) {
-        double[] orbitNormal = new double[3];
+        double[] orbitNormal = {
+                body.orbitFrame.normalX,
+                body.orbitFrame.normalY,
+                body.orbitFrame.normalZ
+        };
         double[] referenceAxis = new double[3];
         double[] tangentAxis = new double[3];
-        if (!computeOrbitalRelativeBasis(body, orbitNormal, referenceAxis, tangentAxis)) {
-            setResolvedSpinAxis(body, orbitNormal[0], orbitNormal[1], orbitNormal[2]);
+        double[] tiltAzimuth = new double[2];
+        if (OrbitUtils.resolveOrbitRelativeAngles(
+                orbitNormal,
+                spinAxis,
+                referenceAxis,
+                tangentAxis,
+                tiltAzimuth)) {
+            body.spinReference.orbitTilt = tiltAzimuth[0];
+            body.spinReference.orbitAzimuth = tiltAzimuth[1];
+        } else {
+            body.spinReference.orbitTilt = 0.0;
+            body.spinReference.orbitAzimuth = 0.0;
+        }
+
+        body.spinReference.baseRotationAngle = body.getRotationAngle();
+        body.spinReference.baseSpinAngularSpeed = body.getSpinAngularSpeed();
+    }
+
+    private void resolveSpinAxis(CelestialBody body, SpinAxisSpec spec, double[] orbitNormal) {
+        if (spec.type == SpinAxisSpec.Type.ABSOLUTE) {
+            resolveAbsoluteSpinAxis(body, spec.rightAscension, spec.declination);
+        } else {
+            resolveOrbitRelativeSpinAxis(body, spec.tilt, spec.azimuth, orbitNormal);
+        }
+    }
+
+    /**
+     * Converts a pole authored as J2000 RA/Dec into the engine world-space spin
+     * axis.
+     */
+    private void resolveAbsoluteSpinAxis(CelestialBody body, double rightAscension, double declination) {
+        double[] resolvedAxis = new double[3];
+        OrbitUtils.resolveAbsoluteSpinAxis(rightAscension, declination, resolvedAxis);
+        body.initSpinAxisDirection(resolvedAxis[0], resolvedAxis[1], resolvedAxis[2]);
+    }
+
+    /**
+     * Converts orbit-relative tilt/azimuth authoring into the engine world-space
+     * spin axis.
+     */
+    private void resolveOrbitRelativeSpinAxis(CelestialBody body, double tilt, double azimuth, double[] orbitNormal) {
+        double[] referenceAxis = new double[3];
+        double[] tangentAxis = new double[3];
+        double[] resolvedAxis = new double[3];
+        if (!OrbitUtils.resolveOrbitRelativeAxis(
+                orbitNormal,
+                tilt,
+                azimuth,
+                referenceAxis,
+                tangentAxis,
+                resolvedAxis)) {
+            body.initSpinAxisDirection(orbitNormal[0], orbitNormal[1], orbitNormal[2]);
             return;
         }
-
-        double cosAzimuth = Math.cos(azimuth);
-        double sinAzimuth = Math.sin(azimuth);
-        double planeX = cosAzimuth * referenceAxis[0] + sinAzimuth * tangentAxis[0];
-        double planeY = cosAzimuth * referenceAxis[1] + sinAzimuth * tangentAxis[1];
-        double planeZ = cosAzimuth * referenceAxis[2] + sinAzimuth * tangentAxis[2];
-
-        double cosTilt = Math.cos(tilt);
-        double sinTilt = Math.sin(tilt);
-        double worldX = cosTilt * orbitNormal[0] + sinTilt * planeX;
-        double worldY = cosTilt * orbitNormal[1] + sinTilt * planeY;
-        double worldZ = cosTilt * orbitNormal[2] + sinTilt * planeZ;
-        setResolvedSpinAxis(body, worldX, worldY, worldZ);
+        body.initSpinAxisDirection(resolvedAxis[0], resolvedAxis[1], resolvedAxis[2]);
     }
 
-    private boolean computeOrbitalRelativeBasis(CelestialBody body,
-            double[] orbitNormal,
-            double[] referenceAxis,
-            double[] tangentAxis) {
-        computeReferenceOrbitalNormal(body, orbitNormal);
-        if (!projectOntoPlane(1.0, 0.0, 0.0, orbitNormal[0], orbitNormal[1], orbitNormal[2], referenceAxis)
-                && !projectOntoPlane(0.0, 1.0, 0.0, orbitNormal[0], orbitNormal[1], orbitNormal[2], referenceAxis)) {
-            return false;
-        }
-
-        tangentAxis[0] = orbitNormal[1] * referenceAxis[2] - orbitNormal[2] * referenceAxis[1];
-        tangentAxis[1] = orbitNormal[2] * referenceAxis[0] - orbitNormal[0] * referenceAxis[2];
-        tangentAxis[2] = orbitNormal[0] * referenceAxis[1] - orbitNormal[1] * referenceAxis[0];
-        double tangentLen = Math.sqrt(lengthSq(tangentAxis[0], tangentAxis[1], tangentAxis[2]));
-        if (tangentLen <= 1e-12) {
-            return false;
-        }
-        tangentAxis[0] /= tangentLen;
-        tangentAxis[1] /= tangentLen;
-        tangentAxis[2] /= tangentLen;
-        return true;
-    }
-
-    private void setResolvedSpinAxis(CelestialBody body, double x, double y, double z) {
-        double len = Math.sqrt(lengthSq(x, y, z));
-        if (len <= 1e-12) {
-            x = 0.0;
-            y = 0.0;
-            z = 1.0;
-            len = 1.0;
-        }
-
-        body.spinAxis.worldX = x / len;
-        body.spinAxis.worldY = y / len;
-        body.spinAxis.worldZ = z / len;
-
+    private double[] resolveReferenceOrbitNormal(CelestialBody body) {
         double[] orbitNormal = new double[3];
-        computeReferenceOrbitalNormal(body, orbitNormal);
-        double dot = clamp(
-                body.spinAxis.worldX * orbitNormal[0]
-                        + body.spinAxis.worldY * orbitNormal[1]
-                        + body.spinAxis.worldZ * orbitNormal[2],
-                -1.0,
-                1.0);
-        body.obliquity = Math.acos(dot);
-    }
-
-    private void computeReferenceOrbitalNormal(CelestialBody body, double[] out) {
-        if (body.semiMajorAxis <= 0.0) {
-            out[0] = 0.0;
-            out[1] = 0.0;
-            out[2] = 1.0;
-            return;
-        }
-
-        double sinInc = Math.sin(body.inclination);
-        double cosInc = Math.cos(body.inclination);
-        double sinOmega = Math.sin(body.longitudeOfAscendingNode);
-        double cosOmega = Math.cos(body.longitudeOfAscendingNode);
-        out[0] = sinInc * sinOmega;
-        out[1] = -sinInc * cosOmega;
-        out[2] = cosInc;
-    }
-
-    private boolean projectOntoPlane(double vx, double vy, double vz,
-            double nx, double ny, double nz,
-            double[] out) {
-        double dot = vx * nx + vy * ny + vz * nz;
-        double px = vx - dot * nx;
-        double py = vy - dot * ny;
-        double pz = vz - dot * nz;
-        double len = Math.sqrt(lengthSq(px, py, pz));
-        if (len <= 1e-12) {
-            return false;
-        }
-        out[0] = px / len;
-        out[1] = py / len;
-        out[2] = pz / len;
-        return true;
-    }
-
-    private double lengthSq(double x, double y, double z) {
-        return x * x + y * y + z * z;
-    }
-
-    private double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
+        OrbitUtils.computeReferenceOrbitNormal(
+                body.semiMajorAxis,
+                body.inclination,
+                body.longitudeOfAscendingNode,
+                orbitNormal);
+        body.setOrbitNormal(orbitNormal[0], orbitNormal[1], orbitNormal[2]);
+        return orbitNormal;
     }
 
     // -------------------------------------------------------------------------
@@ -472,7 +469,7 @@ public class SystemLoader {
         // v = √(μ/p) · [-sinν, e+cosν] where p = a(1-e²) is the semi-latus rectum.
         // Unlike vis-viva (which only gives |v|), this gives the exact velocity
         // vector for any eccentricity — direction is NOT perpendicular to radius.
-        double GM = RK4IntegratorConstants.G * parent.mass;
+        double GM = RK4IntegratorConstants.G * (parent.mass + body.mass);
         double p = a * (1.0 - e * e);
         double speedFactor = Math.sqrt(GM / p);
         double vxPerifocal = -speedFactor * Math.sin(nu);

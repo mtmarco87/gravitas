@@ -4,14 +4,25 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.math.Vector2;
-import com.gravitas.entities.CelestialBody;
+import com.gravitas.entities.bodies.celestial_body.CelestialBody;
 import com.gravitas.physics.PhysicsEngine;
-import com.gravitas.rendering.celestial_body.CelestialFxSettings;
+import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.SimRenderer;
 import com.gravitas.rendering.core.WorldCamera;
-import com.gravitas.rendering.orbit.OrbitRenderMode;
 import com.gravitas.rendering.orbit.OrbitPredictor;
 import com.gravitas.rendering.orbit.OrbitTrail;
+import com.gravitas.settings.AppSettings;
+import com.gravitas.settings.CameraSettings;
+import com.gravitas.settings.OverlaySettings;
+import com.gravitas.settings.SimulationSettings;
+import com.gravitas.state.AppState;
+import com.gravitas.state.SimulationState;
+import com.gravitas.state.UiState;
+import com.gravitas.ui.settings.SettingsPanelController;
+import com.gravitas.ui.settings.SettingsPanelModel;
+import com.gravitas.ui.settings.WarpPresets;
+
+import java.util.Objects;
 
 /**
  * Handles all keyboard / mouse input for the simulation.
@@ -22,16 +33,16 @@ import com.gravitas.rendering.orbit.OrbitTrail;
  * . (period) — next warp preset
  * 1-0 — warp presets: 1x 10x 1k 10k 100k 500k 1M 10M 100M 1B
  * V — toggle visual scale mode (exaggerated planet sizes)
- * T — cycle overlays (trails / trails+orbits / trails+orbits+spin / none)
+ * T — cycle overlays (trails / trails+orbits / none)
  * Y — cycle orbit renderer (solid / CPU dashed / GPU dashed)
  * P — cycle follow mode (free / orbit upright / orbit plane / orbit axial /
  * rotation axial)
  * C — toggle camera mode (TOP_VIEW / FREE_CAM)
  * Z — toggle FREE_CAM FOV mode (adaptive / fixed)
- * L — toggle legacy 2D / full 3D mode
+ * L — toggle orbit dimensions (FLAT 2D / 3D)
  * F — clear follow target
  * R — reset camera to nearest system star
- * X — open celestial FX menu
+ * X — open settings menu
  *
  * Mouse:
  * Left drag — pan
@@ -40,123 +51,31 @@ import com.gravitas.rendering.orbit.OrbitTrail;
  */
 public class GravitasInputProcessor extends InputAdapter {
 
-    public enum OverlayArtifactsMode {
-        TRAILS_ONLY("Trails", true, false, false),
-        TRAILS_AND_ORBITS("Trails+Orbits", true, true, false),
-        TRAILS_ORBITS_AND_SPIN("Trails+Orbits+Spin", true, true, true),
-        NONE("None", false, false, false);
-
-        private final String hudLabel;
-        private final boolean showTrails;
-        private final boolean showOrbitPredictors;
-        private final boolean showSpinAxis;
-
-        OverlayArtifactsMode(String hudLabel, boolean showTrails, boolean showOrbitPredictors,
-                boolean showSpinAxis) {
-            this.hudLabel = hudLabel;
-            this.showTrails = showTrails;
-            this.showOrbitPredictors = showOrbitPredictors;
-            this.showSpinAxis = showSpinAxis;
-        }
-
-        public String hudLabel() {
-            return hudLabel;
-        }
-
-        public boolean showTrails() {
-            return showTrails;
-        }
-
-        public boolean showOrbitPredictors() {
-            return showOrbitPredictors;
-        }
-
-        public boolean showSpinAxis() {
-            return showSpinAxis;
-        }
-
-        public OverlayArtifactsMode next() {
-            OverlayArtifactsMode[] modes = values();
-            return modes[(ordinal() + 1) % modes.length];
-        }
-    }
-
-    private enum CelestialFxMenuPage {
-        MAIN("FX Settings"),
-        CLOUD("Clouds Settings"),
-        LIGHTING("Lighting Settings"),
-        ATMOSPHERE("Atmosphere Settings");
-
-        private final String title;
-
-        CelestialFxMenuPage(String title) {
-            this.title = title;
-        }
-
-        public String title() {
-            return title;
+    public record Actions(Runnable toggleOrbitsDimensions, Runnable cameraReset, Runnable simulationReset) {
+        public Actions {
+            Objects.requireNonNull(toggleOrbitsDimensions, "toggleOrbitsDimensions");
+            Objects.requireNonNull(cameraReset, "cameraReset");
+            Objects.requireNonNull(simulationReset, "simulationReset");
         }
     }
 
     private static final float CAMERA_ARROW_PAN_PX_PER_SEC = 400f;
     private static final float CAMERA_KEY_ROT_SPEED = 1.5f;
-    private static final float CELESTIAL_FX_PANEL_MARGIN_PX = 12f;
-    private static final float CELESTIAL_FX_STATUS_DURATION_SEC = 1.5f;
-    private static final float CELESTIAL_FX_EDIT_REPEAT_DELAY_SEC = 0.35f;
-    private static final float CELESTIAL_FX_EDIT_REPEAT_INTERVAL_SEC = 0.05f;
-    private static final int CELESTIAL_FX_MAIN_OPTION_COUNT = 4;
-    private static final int CELESTIAL_FX_CLOUD_OPTION_COUNT = 8;
-    private static final int CELESTIAL_FX_LIGHTING_OPTION_COUNT = 3;
-    private static final int CELESTIAL_FX_ATMOSPHERE_OPTION_COUNT = 6;
 
-    private static final double[] WARP_PRESETS = {
-            1, 10, 1_000, 10_000, 100_000, 500_000,
-            1_000_000, 10_000_000, 100_000_000, 1_000_000_000
-    };
-
-    private static final String[] WARP_PRESET_LABELS = {
-            "1x [1]", "10x [2]", "1000x [3]", "10000x [4]", "100000x [5]",
-            "500000x [6]", "1000000x [7]", "10000000x [8]", "100000000x [9]", "1000000000x [0]"
-    };
-
-    private final PhysicsEngine physics;
     private final WorldCamera camera;
+    private final PhysicsEngine physics;
+    private final SimRenderer simRenderer;
     private final OrbitPredictor orbitPredictor;
-    private SimRenderer simRenderer;
-    private MeasureTool measureTool;
-    private Runnable dimensionToggle;
-    private Runnable cameraReset;
+    private final MeasureTool measureTool;
+    private final CameraSettings cameraSettings;
+    private final SimulationState simulationState;
+    private final UiState uiState;
+    private final OverlaySettings overlaySettings;
+    private final SimulationSettings simulationSettings;
+    private final Actions actions;
+    private final SettingsPanelController settingsPanelController;
 
-    private boolean paused = false;
     private double prePauseWarp = 1.0;
-
-    // Toggleable modes (read by SimRenderer / OrbitPredictor via accessors)
-    private boolean visualScaleMode = true;
-    private OverlayArtifactsMode overlayArtifactsMode = OverlayArtifactsMode.TRAILS_ONLY;
-    private final CelestialFxSettings celestialFxSettings = new CelestialFxSettings();
-    private boolean celestialFxMenuOpen = false;
-    private CelestialFxMenuPage celestialFxMenuPage = CelestialFxMenuPage.MAIN;
-    private boolean celestialFxMenuEditMode = false;
-    private int celestialFxMainSelection = 0;
-    private int celestialFxCloudSelection = 0;
-    private int celestialFxLightingSelection = 0;
-    private int celestialFxAtmosphereSelection = 0;
-    private int celestialFxEditRepeatDirection = 0;
-    private float celestialFxEditRepeatTimer = 0f;
-    private boolean celestialFxEditRepeatDelayed = false;
-    private float celestialFxEditStartValue = 0f;
-    private String celestialFxManualInputBuffer = "";
-    private boolean celestialFxPanelDragging = false;
-    private boolean celestialFxPanelPositioned = false;
-    private float celestialFxPanelX = 0f;
-    private float celestialFxPanelY = 0f;
-    private float celestialFxPanelWidth = 0f;
-    private float celestialFxPanelHeight = 0f;
-    private float celestialFxPanelDragOffsetX = 0f;
-    private float celestialFxPanelDragOffsetY = 0f;
-    private String celestialFxStatusText = "";
-    private float celestialFxStatusTimer = 0f;
-
     // Left-mouse pan state.
     private boolean leftDragging = false;
 
@@ -172,11 +91,35 @@ public class GravitasInputProcessor extends InputAdapter {
     private CelestialBody pendingSingleTapBody = null;
     private long pendingSingleTapMs = -1;
 
-    public GravitasInputProcessor(PhysicsEngine physics, WorldCamera camera,
-            OrbitPredictor orbitPredictor) {
-        this.physics = physics;
+    public GravitasInputProcessor(WorldCamera camera, PhysicsEngine physics,
+            SimRenderer simRenderer, OrbitPredictor orbitPredictor, MeasureTool measureTool,
+            AppSettings settings, AppState appState, SettingsPanelModel settingsPanelModel, Actions actions) {
         this.camera = camera;
-        this.orbitPredictor = orbitPredictor;
+        this.physics = physics;
+        this.simRenderer = Objects.requireNonNull(simRenderer, "simRenderer");
+        this.orbitPredictor = Objects.requireNonNull(orbitPredictor, "orbitPredictor");
+        this.measureTool = Objects.requireNonNull(measureTool, "measureTool");
+        AppSettings appSettings = Objects.requireNonNull(settings, "settings");
+        AppState runtimeState = Objects.requireNonNull(appState, "appState");
+        this.simulationState = runtimeState.getSimulation();
+        this.uiState = runtimeState.getUi();
+        this.cameraSettings = appSettings.getCameraSettings();
+        this.overlaySettings = appSettings.getOverlaySettings();
+        this.simulationSettings = appSettings.getSimulationSettings();
+        this.actions = Objects.requireNonNull(actions, "actions");
+        simulationSettings.setTimeWarp(physics.getTimeWarpFactor());
+        prePauseWarp = simulationSettings.getTimeWarp();
+        physics.applyPhysicsSettings(appSettings.getPhysicsSettings());
+        this.settingsPanelController = new SettingsPanelController(
+                camera,
+                physics,
+                measureTool,
+                appSettings,
+                runtimeState,
+                Objects.requireNonNull(settingsPanelModel, "settingsPanelModel"),
+                actions,
+                this::clearPendingTapState,
+                this::resetPointerDragging);
     }
 
     // -------------------------------------------------------------------------
@@ -185,31 +128,32 @@ public class GravitasInputProcessor extends InputAdapter {
 
     @Override
     public boolean keyDown(int keycode) {
-        if (celestialFxMenuOpen) {
-            return handleCelestialFxMenuKey(keycode);
+        if (settingsPanelController.isOpen()) {
+            return settingsPanelController.handleKeyDown(keycode);
         }
 
         switch (keycode) {
             case Input.Keys.SPACE -> togglePause();
             case Input.Keys.COMMA -> prevPreset();
             case Input.Keys.PERIOD -> nextPreset();
-            case Input.Keys.NUM_1 -> setWarp(WARP_PRESETS[0]);
-            case Input.Keys.NUM_2 -> setWarp(WARP_PRESETS[1]);
-            case Input.Keys.NUM_3 -> setWarp(WARP_PRESETS[2]);
-            case Input.Keys.NUM_4 -> setWarp(WARP_PRESETS[3]);
-            case Input.Keys.NUM_5 -> setWarp(WARP_PRESETS[4]);
-            case Input.Keys.NUM_6 -> setWarp(WARP_PRESETS[5]);
-            case Input.Keys.NUM_7 -> setWarp(WARP_PRESETS[6]);
-            case Input.Keys.NUM_8 -> setWarp(WARP_PRESETS[7]);
-            case Input.Keys.NUM_9 -> setWarp(WARP_PRESETS[8]);
-            case Input.Keys.NUM_0 -> setWarp(WARP_PRESETS[9]);
-            case Input.Keys.V -> visualScaleMode = !visualScaleMode;
-            case Input.Keys.T -> overlayArtifactsMode = overlayArtifactsMode.next();
-            case Input.Keys.Y -> orbitPredictor.cycleOrbitRenderMode();
-            case Input.Keys.P -> camera.cycleFollowFrameMode();
-            case Input.Keys.X -> toggleCelestialFxMenu();
+            case Input.Keys.NUM_1 -> setWarp(WarpPresets.get(0));
+            case Input.Keys.NUM_2 -> setWarp(WarpPresets.get(1));
+            case Input.Keys.NUM_3 -> setWarp(WarpPresets.get(2));
+            case Input.Keys.NUM_4 -> setWarp(WarpPresets.get(3));
+            case Input.Keys.NUM_5 -> setWarp(WarpPresets.get(4));
+            case Input.Keys.NUM_6 -> setWarp(WarpPresets.get(5));
+            case Input.Keys.NUM_7 -> setWarp(WarpPresets.get(6));
+            case Input.Keys.NUM_8 -> setWarp(WarpPresets.get(7));
+            case Input.Keys.NUM_9 -> setWarp(WarpPresets.get(8));
+            case Input.Keys.NUM_0 -> setWarp(WarpPresets.get(9));
+            case Input.Keys.V -> overlaySettings.toggleVisualScaleMode();
+            case Input.Keys.T -> overlaySettings.cycleOrbitOverlayMode();
+            case Input.Keys.Y -> overlaySettings.cycleOrbitRenderMode();
+            case Input.Keys.P -> cycleFollowFrameMode();
+            case Input.Keys.H -> uiState.toggleLegendVisible();
+            case Input.Keys.X -> settingsPanelController.toggleMenu();
             case Input.Keys.ESCAPE -> {
-                if (measureTool != null && measureTool.isActive()) {
+                if (measureTool.isActive()) {
                     clearPendingTapState();
                     measureTool.cancel();
                 } else {
@@ -217,21 +161,14 @@ public class GravitasInputProcessor extends InputAdapter {
                 }
             }
             case Input.Keys.C -> toggleCameraMode();
-            case Input.Keys.Z -> camera.cycleFreeCamFovMode();
-            case Input.Keys.L -> {
-                if (dimensionToggle != null)
-                    dimensionToggle.run();
-            }
-            case Input.Keys.F -> camera.clearFollow();
-            case Input.Keys.R -> {
-                if (cameraReset != null)
-                    cameraReset.run();
-            }
+            case Input.Keys.Z -> cycleFreeCamFovMode();
+            case Input.Keys.L -> actions.toggleOrbitsDimensions().run();
+            case Input.Keys.F -> clearFollowTarget();
+            case Input.Keys.R -> actions.cameraReset().run();
             case Input.Keys.Q -> Gdx.app.exit();
             case Input.Keys.M -> {
                 clearPendingTapState();
-                if (measureTool != null)
-                    measureTool.toggle();
+                measureTool.toggle();
             }
             default -> {
                 return false;
@@ -240,362 +177,12 @@ public class GravitasInputProcessor extends InputAdapter {
         return true;
     }
 
-    private boolean handleCelestialFxMenuKey(int keycode) {
-        if (celestialFxMenuEditMode) {
-            return handleCelestialFxMenuEditKey(keycode);
-        }
-
-        switch (keycode) {
-            case Input.Keys.X -> celestialFxMenuOpen = false;
-            case Input.Keys.ESCAPE, Input.Keys.LEFT -> backOutOfCelestialFxMenu();
-            case Input.Keys.UP -> moveCelestialFxSelection(-1);
-            case Input.Keys.DOWN -> moveCelestialFxSelection(1);
-            case Input.Keys.NUM_1 -> {
-                if (celestialFxMenuPage == CelestialFxMenuPage.MAIN) {
-                    celestialFxMainSelection = 0;
-                    activateCelestialFxSelection();
-                }
-            }
-            case Input.Keys.NUM_2 -> {
-                if (celestialFxMenuPage == CelestialFxMenuPage.MAIN) {
-                    celestialFxMainSelection = 1;
-                    activateCelestialFxSelection();
-                }
-            }
-            case Input.Keys.NUM_3 -> {
-                if (celestialFxMenuPage == CelestialFxMenuPage.MAIN) {
-                    celestialFxMainSelection = 2;
-                    activateCelestialFxSelection();
-                }
-            }
-            case Input.Keys.NUM_4 -> {
-                if (celestialFxMenuPage == CelestialFxMenuPage.MAIN) {
-                    celestialFxMainSelection = 3;
-                    activateCelestialFxSelection();
-                }
-            }
-            case Input.Keys.NUM_5 -> {
-                return true;
-            }
-            case Input.Keys.ENTER, Input.Keys.SPACE, Input.Keys.RIGHT -> activateCelestialFxSelection();
-            default -> {
-                return true;
-            }
-        }
-        return true;
-    }
-
-    private boolean handleCelestialFxMenuEditKey(int keycode) {
-        switch (keycode) {
-            case Input.Keys.X -> celestialFxMenuOpen = false;
-            case Input.Keys.ESCAPE, Input.Keys.LEFT -> cancelCelestialFxEditMode();
-            case Input.Keys.ENTER, Input.Keys.SPACE, Input.Keys.RIGHT -> commitCelestialFxEditMode();
-            case Input.Keys.UP -> nudgeCelestialFxValue(1);
-            case Input.Keys.DOWN -> nudgeCelestialFxValue(-1);
-            case Input.Keys.BACKSPACE -> handleCelestialFxBackspace();
-            default -> {
-                return true;
-            }
-        }
-        return true;
-    }
-
-    private void toggleCelestialFxMenu() {
-        celestialFxMenuOpen = !celestialFxMenuOpen;
-        celestialFxPanelDragging = false;
-        if (celestialFxMenuOpen) {
-            celestialFxMenuPage = CelestialFxMenuPage.MAIN;
-            clearCelestialFxStatus();
-            exitCelestialFxEditMode();
-            clearPendingTapState();
-            camera.onPanEnd();
-            leftDragging = false;
-            rightDragging = false;
-        }
-    }
-
-    private void backOutOfCelestialFxMenu() {
-        if (celestialFxMenuPage == CelestialFxMenuPage.MAIN) {
-            celestialFxMenuOpen = false;
-            return;
-        }
-
-        celestialFxMenuPage = CelestialFxMenuPage.MAIN;
-        exitCelestialFxEditMode();
-    }
-
-    private void moveCelestialFxSelection(int delta) {
-        switch (celestialFxMenuPage) {
-            case MAIN -> celestialFxMainSelection = wrapSelection(celestialFxMainSelection + delta,
-                    CELESTIAL_FX_MAIN_OPTION_COUNT);
-            case CLOUD -> celestialFxCloudSelection = wrapSelection(celestialFxCloudSelection + delta,
-                    CELESTIAL_FX_CLOUD_OPTION_COUNT);
-            case LIGHTING -> celestialFxLightingSelection = wrapSelection(celestialFxLightingSelection + delta,
-                    CELESTIAL_FX_LIGHTING_OPTION_COUNT);
-            case ATMOSPHERE -> celestialFxAtmosphereSelection = wrapSelection(celestialFxAtmosphereSelection + delta,
-                    CELESTIAL_FX_ATMOSPHERE_OPTION_COUNT);
-        }
-    }
-
-    private int wrapSelection(int index, int count) {
-        return (index + count) % count;
-    }
-
-    private void activateCelestialFxSelection() {
-        switch (celestialFxMenuPage) {
-            case MAIN -> activateCelestialFxMainSelection();
-            case CLOUD -> activateCelestialFxCloudSelection();
-            case LIGHTING -> activateCelestialFxLightingSelection();
-            case ATMOSPHERE -> activateCelestialFxAtmosphereSelection();
-        }
-    }
-
-    private void activateCelestialFxMainSelection() {
-        switch (celestialFxMainSelection) {
-            case 0 -> {
-                celestialFxMenuPage = CelestialFxMenuPage.CLOUD;
-                exitCelestialFxEditMode();
-            }
-            case 1 -> {
-                celestialFxMenuPage = CelestialFxMenuPage.LIGHTING;
-                exitCelestialFxEditMode();
-            }
-            case 2 -> {
-                celestialFxMenuPage = CelestialFxMenuPage.ATMOSPHERE;
-                exitCelestialFxEditMode();
-            }
-            case 3 -> {
-                celestialFxSettings.resetToDefaults();
-                showCelestialFxStatus("Defaults restored");
-            }
-            default -> {
-            }
-        }
-    }
-
-    private void activateCelestialFxCloudSelection() {
-        switch (celestialFxCloudSelection) {
-            case 0 -> backOutOfCelestialFxMenu();
-            case 1 -> celestialFxSettings.cycleCloudFxMode();
-            case 2 -> celestialFxSettings.toggleCloudDayNightEnabled();
-            case 3 -> celestialFxSettings.cycleCloudTerminatorMode();
-            case 4 -> celestialFxSettings.cycleCloudCompositingMode();
-            case 5, 6, 7 -> toggleCelestialFxEditMode();
-            default -> {
-            }
-        }
-    }
-
-    private void activateCelestialFxLightingSelection() {
-        switch (celestialFxLightingSelection) {
-            case 0 -> backOutOfCelestialFxMenu();
-            case 1 -> celestialFxSettings.toggleDayNightEnabled();
-            case 2 -> celestialFxSettings.toggleRingShadowEnabled();
-            default -> {
-            }
-        }
-    }
-
-    private void activateCelestialFxAtmosphereSelection() {
-        switch (celestialFxAtmosphereSelection) {
-            case 0 -> backOutOfCelestialFxMenu();
-            case 1 -> celestialFxSettings.toggleAtmosphereDayNightEnabled();
-            case 2, 3, 4, 5 -> toggleCelestialFxEditMode();
-            default -> {
-            }
-        }
-    }
-
-    private void toggleCelestialFxEditMode() {
-        if (celestialFxMenuEditMode) {
-            commitCelestialFxEditMode();
-            return;
-        }
-        celestialFxEditStartValue = currentCelestialFxEditableValue();
-        celestialFxMenuEditMode = true;
-        celestialFxEditRepeatDirection = 0;
-        celestialFxEditRepeatTimer = 0f;
-        celestialFxEditRepeatDelayed = false;
-        celestialFxManualInputBuffer = "";
-    }
-
-    private void exitCelestialFxEditMode() {
-        celestialFxMenuEditMode = false;
-        celestialFxEditRepeatDirection = 0;
-        celestialFxEditRepeatTimer = 0f;
-        celestialFxEditRepeatDelayed = false;
-        celestialFxManualInputBuffer = "";
-    }
-
-    private void commitCelestialFxEditMode() {
-        if (!celestialFxManualInputBuffer.isEmpty()) {
-            applyCelestialFxAbsoluteValue(celestialFxManualInputBuffer);
-        }
-        exitCelestialFxEditMode();
-    }
-
-    private void cancelCelestialFxEditMode() {
-        if (isCurrentSelectionNumericEditable()) {
-            applyCelestialFxStoredValue(celestialFxEditStartValue);
-        }
-        exitCelestialFxEditMode();
-    }
-
-    private void handleCelestialFxBackspace() {
-        if (celestialFxManualInputBuffer.isEmpty()) {
-            return;
-        }
-        celestialFxManualInputBuffer = celestialFxManualInputBuffer.substring(0,
-                celestialFxManualInputBuffer.length() - 1);
-    }
-
-    private void nudgeCelestialFxValue(int direction) {
-        celestialFxManualInputBuffer = "";
-        adjustCelestialFxValue(direction * CelestialFxSettings.VALUE_STEP);
-        celestialFxEditRepeatDirection = direction;
-        celestialFxEditRepeatTimer = 0f;
-        celestialFxEditRepeatDelayed = false;
-    }
-
-    private void adjustCelestialFxValue(float delta) {
-        switch (celestialFxMenuPage) {
-            case CLOUD -> {
-                switch (celestialFxCloudSelection) {
-                    case 5 -> celestialFxSettings.addCloudProceduralTextureCoupling(delta);
-                    case 6 -> celestialFxSettings.addCloudTextureAlphaWeight(delta);
-                    case 7 -> celestialFxSettings.addCloudProceduralAlphaWeight(delta);
-                    default -> {
-                    }
-                }
-            }
-            case ATMOSPHERE -> {
-                switch (celestialFxAtmosphereSelection) {
-                    case 2 -> celestialFxSettings.addAtmosphereNightOuterFloor(delta);
-                    case 3 -> celestialFxSettings.addAtmosphereNightInnerFloor(delta);
-                    case 4 -> celestialFxSettings.addAtmosphereDenseNightOuterFloor(delta);
-                    case 5 -> celestialFxSettings.addAtmosphereDenseNightInnerFloor(delta);
-                    default -> {
-                    }
-                }
-            }
-            case MAIN, LIGHTING -> {
-            }
-        }
-    }
-
-    private void applyCelestialFxAbsoluteValue(String rawValue) {
-        if (!isCurrentSelectionNumericEditable()) {
-            return;
-        }
-
-        try {
-            float value = Float.parseFloat(rawValue);
-            switch (celestialFxMenuPage) {
-                case CLOUD -> {
-                    switch (celestialFxCloudSelection) {
-                        case 5 -> celestialFxSettings.setCloudProceduralTextureCoupling(value);
-                        case 6 -> celestialFxSettings.setCloudTextureAlphaWeight(value);
-                        case 7 -> celestialFxSettings.setCloudProceduralAlphaWeight(value);
-                        default -> {
-                        }
-                    }
-                }
-                case ATMOSPHERE -> {
-                    switch (celestialFxAtmosphereSelection) {
-                        case 2 -> celestialFxSettings.setAtmosphereNightOuterFloor(value);
-                        case 3 -> celestialFxSettings.setAtmosphereNightInnerFloor(value);
-                        case 4 -> celestialFxSettings.setAtmosphereDenseNightOuterFloor(value);
-                        case 5 -> celestialFxSettings.setAtmosphereDenseNightInnerFloor(value);
-                        default -> {
-                        }
-                    }
-                }
-                case MAIN, LIGHTING -> {
-                }
-            }
-        } catch (NumberFormatException ignored) {
-        }
-    }
-
-    private void applyCelestialFxStoredValue(float value) {
-        switch (celestialFxMenuPage) {
-            case CLOUD -> {
-                switch (celestialFxCloudSelection) {
-                    case 5 -> celestialFxSettings.setCloudProceduralTextureCoupling(value);
-                    case 6 -> celestialFxSettings.setCloudTextureAlphaWeight(value);
-                    case 7 -> celestialFxSettings.setCloudProceduralAlphaWeight(value);
-                    default -> {
-                    }
-                }
-            }
-            case ATMOSPHERE -> {
-                switch (celestialFxAtmosphereSelection) {
-                    case 2 -> celestialFxSettings.setAtmosphereNightOuterFloor(value);
-                    case 3 -> celestialFxSettings.setAtmosphereNightInnerFloor(value);
-                    case 4 -> celestialFxSettings.setAtmosphereDenseNightOuterFloor(value);
-                    case 5 -> celestialFxSettings.setAtmosphereDenseNightInnerFloor(value);
-                    default -> {
-                    }
-                }
-            }
-            case MAIN, LIGHTING -> {
-            }
-        }
-    }
-
-    private float currentCelestialFxEditableValue() {
-        return switch (celestialFxMenuPage) {
-            case CLOUD -> switch (celestialFxCloudSelection) {
-                case 5 -> celestialFxSettings.getCloudProceduralTextureCoupling();
-                case 6 -> celestialFxSettings.getCloudTextureAlphaWeight();
-                case 7 -> celestialFxSettings.getCloudProceduralAlphaWeight();
-                default -> 0f;
-            };
-            case ATMOSPHERE -> switch (celestialFxAtmosphereSelection) {
-                case 2 -> celestialFxSettings.getAtmosphereNightOuterFloor();
-                case 3 -> celestialFxSettings.getAtmosphereNightInnerFloor();
-                case 4 -> celestialFxSettings.getAtmosphereDenseNightOuterFloor();
-                case 5 -> celestialFxSettings.getAtmosphereDenseNightInnerFloor();
-                default -> 0f;
-            };
-            case MAIN, LIGHTING -> 0f;
-        };
-    }
-
     @Override
     public boolean keyTyped(char character) {
-        if (!celestialFxMenuOpen || !isCurrentSelectionNumericEditable()) {
+        if (!settingsPanelController.isOpen()) {
             return false;
         }
-
-        if ((character >= '0' && character <= '9') || character == '.' || character == ',') {
-            if (!celestialFxMenuEditMode) {
-                toggleCelestialFxEditMode();
-            }
-            appendCelestialFxInputChar(character == ',' ? '.' : character);
-            return true;
-        }
-        return false;
-    }
-
-    private void appendCelestialFxInputChar(char character) {
-        if (character == '.' && celestialFxManualInputBuffer.contains(".")) {
-            return;
-        }
-        if (character == '.' && celestialFxManualInputBuffer.isEmpty()) {
-            celestialFxManualInputBuffer = "0.";
-            return;
-        }
-        celestialFxManualInputBuffer += character;
-    }
-
-    private boolean isCurrentSelectionNumericEditable() {
-        return switch (celestialFxMenuPage) {
-            case CLOUD -> celestialFxCloudSelection >= 5;
-            case LIGHTING -> false;
-            case ATMOSPHERE -> celestialFxAtmosphereSelection >= 2;
-            case MAIN -> false;
-        };
+        return settingsPanelController.handleKeyTyped(character);
     }
 
     private void toggleCameraMode() {
@@ -603,64 +190,65 @@ public class GravitasInputProcessor extends InputAdapter {
             return;
         }
 
-        if (camera.getMode() == WorldCamera.CameraMode.TOP_VIEW) {
+        if (cameraSettings.getCameraMode() == CameraMode.TOP_VIEW) {
             camera.switchToFreeCamSmooth();
         } else {
             camera.switchToTopViewSmooth();
         }
     }
 
+    private void cycleFollowFrameMode() {
+        camera.cycleFollowFrameMode();
+    }
+
+    private void cycleFreeCamFovMode() {
+        camera.cycleFreeCamFovMode();
+    }
+
+    private void clearFollowTarget() {
+        camera.clearFollow();
+    }
+
     private void togglePause() {
-        if (paused) {
+        if (simulationState.isPaused()) {
             physics.setTimeWarpFactor(prePauseWarp);
-            paused = false;
+            simulationState.setPaused(false);
         } else {
-            prePauseWarp = physics.getTimeWarpFactor();
+            prePauseWarp = simulationSettings.getTimeWarp();
             physics.setTimeWarpFactor(0);
-            paused = true;
+            simulationState.setPaused(true);
         }
     }
 
     private void prevPreset() {
-        if (paused)
+        if (simulationState.isPaused())
             return;
         int idx = currentPresetIndex();
         if (idx > 0)
-            setWarp(WARP_PRESETS[idx - 1]);
+            setWarp(WarpPresets.get(idx - 1));
     }
 
     private void nextPreset() {
-        if (paused)
+        if (simulationState.isPaused())
             return;
         int idx = currentPresetIndex();
-        if (idx < WARP_PRESETS.length - 1)
-            setWarp(WARP_PRESETS[idx + 1]);
+        if (idx < WarpPresets.size() - 1)
+            setWarp(WarpPresets.get(idx + 1));
     }
 
     /**
      * Returns the index in WARP_PRESETS closest to the current warp (log scale).
      */
     private int currentPresetIndex() {
-        return nearestWarpPresetIndex(physics.getTimeWarpFactor());
+        return WarpPresets.nearestIndex(simulationSettings.getTimeWarp());
     }
 
     public static String formatWarpPreset(double warp) {
-        return WARP_PRESET_LABELS[nearestWarpPresetIndex(warp)];
+        return WarpPresets.formatPreset(warp);
     }
 
-    private static int nearestWarpPresetIndex(double warp) {
-        double safeWarp = Math.max(1.0, warp);
-        double warpLog10 = Math.log10(safeWarp);
-        int bestIndex = 0;
-        double bestDistance = Double.POSITIVE_INFINITY;
-        for (int i = 0; i < WARP_PRESETS.length; i++) {
-            double distance = Math.abs(warpLog10 - Math.log10(WARP_PRESETS[i]));
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                bestIndex = i;
-            }
-        }
-        return bestIndex;
+    public static String formatWarpDisplayLabel(double warp) {
+        return WarpPresets.formatDisplayLabel(warp);
     }
 
     /**
@@ -674,7 +262,7 @@ public class GravitasInputProcessor extends InputAdapter {
      * neither is an ancestor of the other.
      */
     private CelestialBody findBodyAt(int screenX, int screenY) {
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM)
+        if (camera.getMode() == CameraMode.FREE_CAM)
             return findBodyAt3D(screenX, screenY);
         return findBodyAt2D(screenX, screenY);
     }
@@ -692,7 +280,7 @@ public class GravitasInputProcessor extends InputAdapter {
         double bestDepth = Double.MAX_VALUE;
         float bestScreenR = 0;
 
-        for (var obj : physics.getObjects()) {
+        for (var obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody cb) || !cb.active)
                 continue;
             Vector2 sc = camera.worldToScreen(cb.x, cb.y, cb.z);
@@ -733,7 +321,7 @@ public class GravitasInputProcessor extends InputAdapter {
         CelestialBody best = null;
         float bestDistSq = 30 * 30;
 
-        for (var obj : physics.getObjects()) {
+        for (var obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody cb) || !cb.active)
                 continue;
             Vector2 sc = camera.worldToScreen(cb.x, cb.y, cb.z);
@@ -779,7 +367,7 @@ public class GravitasInputProcessor extends InputAdapter {
     private static final float ORBIT_HIT_PX = 8f;
 
     private CelestialBody findBodyOnOrbit(int screenX, int screenY) {
-        if (!overlayArtifactsMode.showOrbitPredictors())
+        if (!overlaySettings.isShowOrbitPredictors())
             return null;
 
         // Work in bottom-left screen coords (same as worldToScreen output).
@@ -787,7 +375,7 @@ public class GravitasInputProcessor extends InputAdapter {
         float bestDistSq = ORBIT_HIT_PX * ORBIT_HIT_PX;
         CelestialBody bestBody = null;
 
-        for (var obj : physics.getObjects()) {
+        for (var obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody cb))
                 continue;
             if (!cb.active || cb.parent == null)
@@ -816,13 +404,13 @@ public class GravitasInputProcessor extends InputAdapter {
      * passes closest to the click within ORBIT_HIT_PX, or null.
      */
     private CelestialBody findBodyOnTrail(int screenX, int screenY) {
-        if (simRenderer == null || !overlayArtifactsMode.showTrails())
+        if (!overlaySettings.isShowTrails())
             return null;
         float sySrc = Gdx.graphics.getHeight() - screenY;
         float bestDistSq = ORBIT_HIT_PX * ORBIT_HIT_PX;
         CelestialBody bestBody = null;
 
-        for (var obj : physics.getObjects()) {
+        for (var obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody cb) || !cb.active)
                 continue;
             OrbitTrail trail = simRenderer.getTrail(obj.id);
@@ -860,8 +448,18 @@ public class GravitasInputProcessor extends InputAdapter {
     }
 
     private void setWarp(double warp) {
-        physics.setTimeWarpFactor(warp);
-        paused = false;
+        applySimulationWarp(warp, false);
+    }
+
+    private void applySimulationWarp(double warp, boolean preservePause) {
+        simulationSettings.setTimeWarp(warp);
+        prePauseWarp = simulationSettings.getTimeWarp();
+        if (preservePause && simulationState.isPaused()) {
+            physics.setTimeWarpFactor(0);
+            return;
+        }
+        physics.setTimeWarpFactor(simulationSettings.getTimeWarp());
+        simulationState.setPaused(false);
     }
 
     // -------------------------------------------------------------------------
@@ -870,12 +468,11 @@ public class GravitasInputProcessor extends InputAdapter {
 
     @Override
     public boolean scrolled(float amountX, float amountY) {
-        if (celestialFxMenuOpen) {
+        if (settingsPanelController.isOpen()) {
             return true;
         }
         camera.onScroll(Gdx.input.getX(), Gdx.input.getY(), amountY);
-        if (simRenderer != null)
-            simRenderer.resetVsInhibit();
+        simRenderer.resetVsInhibit();
         return true;
     }
 
@@ -885,24 +482,13 @@ public class GravitasInputProcessor extends InputAdapter {
 
     @Override
     public boolean touchDown(int screenX, int screenY, int pointer, int button) {
-        if (celestialFxMenuOpen) {
-            clearPendingTapState();
-            leftDragging = false;
-            rightDragging = false;
-            if (button == Input.Buttons.LEFT) {
-                float uiY = Gdx.graphics.getHeight() - screenY;
-                if (isInsideCelestialFxPanel(screenX, uiY)) {
-                    celestialFxPanelDragging = true;
-                    celestialFxPanelDragOffsetX = screenX - celestialFxPanelX;
-                    celestialFxPanelDragOffsetY = uiY - celestialFxPanelY;
-                }
-            }
-            return true;
+        if (settingsPanelController.isOpen()) {
+            return settingsPanelController.handleTouchDown(screenX, screenY, button);
         }
         if (button == Input.Buttons.LEFT) {
             touchDownScreenX = screenX;
             touchDownScreenY = screenY;
-            if (measureTool != null && measureTool.isActive()) {
+            if (measureTool.isActive()) {
                 clearPendingTapState();
                 leftDragging = false;
                 return true;
@@ -912,7 +498,7 @@ public class GravitasInputProcessor extends InputAdapter {
             return true;
         }
         if (button == Input.Buttons.RIGHT
-                && camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+                && camera.getMode() == CameraMode.FREE_CAM) {
             rightDragging = true;
             lastOrbitX = screenX;
             lastOrbitY = screenY;
@@ -923,16 +509,8 @@ public class GravitasInputProcessor extends InputAdapter {
 
     @Override
     public boolean touchDragged(int screenX, int screenY, int pointer) {
-        if (celestialFxMenuOpen) {
-            if (celestialFxPanelDragging) {
-                float uiY = Gdx.graphics.getHeight() - screenY;
-                celestialFxPanelPositioned = true;
-                celestialFxPanelX = screenX - celestialFxPanelDragOffsetX;
-                celestialFxPanelY = uiY - celestialFxPanelDragOffsetY;
-                clampCelestialFxPanelPosition(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(),
-                        celestialFxPanelWidth, celestialFxPanelHeight);
-            }
-            return true;
+        if (settingsPanelController.isOpen()) {
+            return settingsPanelController.handleTouchDragged(screenX, screenY);
         }
         if (rightDragging) {
             camera.onOrbitDrag(screenX - lastOrbitX, screenY - lastOrbitY);
@@ -940,7 +518,7 @@ public class GravitasInputProcessor extends InputAdapter {
             lastOrbitY = screenY;
             return true;
         }
-        if (measureTool != null && measureTool.isActive()) {
+        if (measureTool.isActive()) {
             return true;
         }
         if (leftDragging) {
@@ -952,13 +530,8 @@ public class GravitasInputProcessor extends InputAdapter {
 
     @Override
     public boolean touchUp(int screenX, int screenY, int pointer, int button) {
-        if (celestialFxMenuOpen) {
-            leftDragging = false;
-            rightDragging = false;
-            if (button == Input.Buttons.LEFT) {
-                celestialFxPanelDragging = false;
-            }
-            return true;
+        if (settingsPanelController.isOpen()) {
+            return settingsPanelController.handleTouchUp(screenX, screenY, button);
         }
         if (button == Input.Buttons.RIGHT) {
             rightDragging = false;
@@ -969,7 +542,7 @@ public class GravitasInputProcessor extends InputAdapter {
             leftDragging = false;
 
             // Measure tool intercepts clicks when active.
-            if (measureTool != null && measureTool.isActive()) {
+            if (measureTool.isActive()) {
                 clearPendingTapState();
                 int dx = screenX - touchDownScreenX;
                 int dy = screenY - touchDownScreenY;
@@ -1040,8 +613,8 @@ public class GravitasInputProcessor extends InputAdapter {
      * Fires deferred single-tap actions once the double-click window has expired.
      */
     public void update(float dt) {
-        if (celestialFxMenuOpen) {
-            updateCelestialFxMenu(dt);
+        if (settingsPanelController.isOpen()) {
+            settingsPanelController.update(dt);
             return;
         }
 
@@ -1061,62 +634,8 @@ public class GravitasInputProcessor extends InputAdapter {
         }
     }
 
-    private void updateCelestialFxMenu(float dt) {
-        if (celestialFxStatusTimer > 0f) {
-            celestialFxStatusTimer = Math.max(0f, celestialFxStatusTimer - dt);
-            if (celestialFxStatusTimer == 0f) {
-                celestialFxStatusText = "";
-            }
-        }
-
-        if (!celestialFxMenuEditMode || !isCurrentSelectionNumericEditable()) {
-            celestialFxEditRepeatDirection = 0;
-            celestialFxEditRepeatTimer = 0f;
-            celestialFxEditRepeatDelayed = false;
-            return;
-        }
-
-        int direction = 0;
-        if (Gdx.input.isKeyPressed(Input.Keys.UP)) {
-            direction = 1;
-        } else if (Gdx.input.isKeyPressed(Input.Keys.DOWN)) {
-            direction = -1;
-        }
-
-        if (direction == 0) {
-            celestialFxEditRepeatDirection = 0;
-            celestialFxEditRepeatTimer = 0f;
-            celestialFxEditRepeatDelayed = false;
-            return;
-        }
-
-        if (celestialFxEditRepeatDirection != direction) {
-            celestialFxEditRepeatDirection = direction;
-            celestialFxEditRepeatTimer = 0f;
-            celestialFxEditRepeatDelayed = false;
-            return;
-        }
-
-        celestialFxEditRepeatTimer += dt;
-        if (!celestialFxEditRepeatDelayed) {
-            if (celestialFxEditRepeatTimer >= CELESTIAL_FX_EDIT_REPEAT_DELAY_SEC) {
-                celestialFxEditRepeatTimer -= CELESTIAL_FX_EDIT_REPEAT_DELAY_SEC;
-                celestialFxEditRepeatDelayed = true;
-                celestialFxManualInputBuffer = "";
-                adjustCelestialFxValue(direction * CelestialFxSettings.VALUE_STEP);
-            }
-            return;
-        }
-
-        while (celestialFxEditRepeatTimer >= CELESTIAL_FX_EDIT_REPEAT_INTERVAL_SEC) {
-            celestialFxEditRepeatTimer -= CELESTIAL_FX_EDIT_REPEAT_INTERVAL_SEC;
-            celestialFxManualInputBuffer = "";
-            adjustCelestialFxValue(direction * CelestialFxSettings.VALUE_STEP);
-        }
-    }
-
     private void pollContinuousCameraInput(float dt) {
-        if (camera.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+        if (camera.getMode() == CameraMode.FREE_CAM) {
             float rot = CAMERA_KEY_ROT_SPEED * dt;
             if (Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
                 camera.rotateFreeCamBy(rot, 0f);
@@ -1148,253 +667,8 @@ public class GravitasInputProcessor extends InputAdapter {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // State accessors
-    // -------------------------------------------------------------------------
-
-    public boolean isPaused() {
-        return paused;
-    }
-
-    public boolean isVisualScaleMode() {
-        return visualScaleMode;
-    }
-
-    public boolean isShowOrbitPredictors() {
-        return overlayArtifactsMode.showOrbitPredictors();
-    }
-
-    public boolean isShowTrails() {
-        return overlayArtifactsMode.showTrails();
-    }
-
-    public boolean isShowSpinAxisOverlay() {
-        return overlayArtifactsMode.showSpinAxis();
-    }
-
-    public OverlayArtifactsMode getOverlayArtifactsMode() {
-        return overlayArtifactsMode;
-    }
-
-    public boolean isCloudFxEnabled() {
-        return !celestialFxSettings.getCloudFxMode().isOff();
-    }
-
-    public CelestialFxSettings getCelestialFxSettings() {
-        return celestialFxSettings;
-    }
-
-    public boolean isSurfaceFxEnabled() {
-        return celestialFxSettings.isDayNightEnabled();
-    }
-
-    public boolean isRingShadowFxEnabled() {
-        return celestialFxSettings.isRingShadowEnabled();
-    }
-
-    public boolean isCelestialFxMenuOpen() {
-        return celestialFxMenuOpen;
-    }
-
-    public int getCelestialFxMenuSelection() {
-        return switch (celestialFxMenuPage) {
-            case MAIN -> celestialFxMainSelection;
-            case CLOUD -> celestialFxCloudSelection;
-            case LIGHTING -> celestialFxLightingSelection;
-            case ATMOSPHERE -> celestialFxAtmosphereSelection;
-        };
-    }
-
-    public String getCelestialFxMenuTitle() {
-        return celestialFxMenuPage.title();
-    }
-
-    public String getCelestialFxMenuHint() {
-        if (celestialFxMenuEditMode) {
-            return "Type value, Up/Down nudge, Enter apply, Esc/Left cancel";
-        }
-        return switch (celestialFxMenuPage) {
-            case MAIN -> "Up/Down select, Enter open, 1-4 quick open, X/Esc close";
-            case CLOUD, LIGHTING, ATMOSPHERE -> "Up/Down select, Enter change, Left back, X/Esc close";
-        };
-    }
-
-    public int getCelestialFxMenuOptionCount() {
-        return switch (celestialFxMenuPage) {
-            case MAIN -> CELESTIAL_FX_MAIN_OPTION_COUNT;
-            case CLOUD -> CELESTIAL_FX_CLOUD_OPTION_COUNT;
-            case LIGHTING -> CELESTIAL_FX_LIGHTING_OPTION_COUNT;
-            case ATMOSPHERE -> CELESTIAL_FX_ATMOSPHERE_OPTION_COUNT;
-        };
-    }
-
-    public String getCelestialFxOptionLine(int index) {
-        return switch (celestialFxMenuPage) {
-            case MAIN -> mainCelestialFxOptionLine(index);
-            case CLOUD -> cloudCelestialFxOptionLine(index);
-            case LIGHTING -> lightingCelestialFxOptionLine(index);
-            case ATMOSPHERE -> atmosphereCelestialFxOptionLine(index);
-        };
-    }
-
-    public boolean isCelestialFxMenuEditMode() {
-        return celestialFxMenuEditMode;
-    }
-
-    private String mainCelestialFxOptionLine(int index) {
-        return switch (index) {
-            case 0 -> "1. Clouds Settings >";
-            case 1 -> "2. Lighting Settings >";
-            case 2 -> "3. Atmosphere Settings >";
-            case 3 -> "4. Restore Defaults";
-            default -> "?";
-        };
-    }
-
-    public boolean isCelestialFxStatusVisible() {
-        return celestialFxStatusTimer > 0f && !celestialFxStatusText.isEmpty();
-    }
-
-    public String getCelestialFxStatusText() {
-        return celestialFxStatusText;
-    }
-
-    private String cloudCelestialFxOptionLine(int index) {
-        String edit = editSuffix(index, celestialFxCloudSelection);
-        return switch (index) {
-            case 0 -> "1. < Back";
-            case 1 -> "2. Mode [" + celestialFxSettings.getCloudFxMode().hudLabel() + "]";
-            case 2 -> "3. Day/Night [" + subordinateDayNightLabel(celestialFxSettings.isCloudDayNightEnabled()) + "]";
-            case 3 -> "4. Terminator [" + celestialFxSettings.getCloudTerminatorMode().hudLabel() + "]";
-            case 4 -> "5. Compositing [" + celestialFxSettings.getCloudCompositingMode().hudLabel() + "]";
-            case 5 -> "6. Coupling [" + formatFxValue(celestialFxSettings.getCloudProceduralTextureCoupling()) + "]"
-                    + edit;
-            case 6 -> "7. Texture Alpha [" + formatFxValue(celestialFxSettings.getCloudTextureAlphaWeight()) + "]"
-                    + edit;
-            case 7 -> "8. Procedural Alpha [" + formatFxValue(celestialFxSettings.getCloudProceduralAlphaWeight())
-                    + "]" + edit;
-            default -> "?";
-        };
-    }
-
-    private String lightingCelestialFxOptionLine(int index) {
-        return switch (index) {
-            case 0 -> "1. < Back";
-            case 1 -> "2. Global Day/Night [" + (celestialFxSettings.isDayNightEnabled() ? "ON" : "OFF") + "]";
-            case 2 -> "3. Ring Shadows [" + (celestialFxSettings.isRingShadowEnabled() ? "ON" : "OFF") + "]";
-            default -> "?";
-        };
-    }
-
-    private String atmosphereCelestialFxOptionLine(int index) {
-        String edit = editSuffix(index, celestialFxAtmosphereSelection);
-        return switch (index) {
-            case 0 -> "1. < Back";
-            case 1 ->
-                "2. Day/Night [" + subordinateDayNightLabel(celestialFxSettings.isAtmosphereDayNightEnabled()) + "]";
-            case 2 -> "3. Base Night Outer [" + formatFxValue(celestialFxSettings.getAtmosphereNightOuterFloor()) + "]"
-                    + edit;
-            case 3 -> "4. Base Night Inner [" + formatFxValue(celestialFxSettings.getAtmosphereNightInnerFloor()) + "]"
-                    + edit;
-            case 4 -> "5. Dense Night Outer [" + formatFxValue(celestialFxSettings.getAtmosphereDenseNightOuterFloor())
-                    + "]" + edit;
-            case 5 -> "6. Dense Night Inner [" + formatFxValue(celestialFxSettings.getAtmosphereDenseNightInnerFloor())
-                    + "]" + edit;
-            default -> "?";
-        };
-    }
-
-    private String subordinateDayNightLabel(boolean localEnabled) {
-        String localLabel = localEnabled ? "ON" : "OFF";
-        if (celestialFxSettings.isDayNightEnabled()) {
-            return localLabel;
-        }
-        return localLabel + ", global OFF";
-    }
-
-    private String formatFxValue(float value) {
-        return String.format("%.2f", value);
-    }
-
-    private String editSuffix(int index, int selection) {
-        if (!celestialFxMenuEditMode || selection != index) {
-            return "";
-        }
-        if (!celestialFxManualInputBuffer.isEmpty()) {
-            return " <TYPE " + celestialFxManualInputBuffer + ">";
-        }
-        return " <EDIT>";
-    }
-
-    public float resolveCelestialFxPanelX(int screenWidth, float panelWidth) {
-        if (!celestialFxPanelPositioned) {
-            return screenWidth * 0.5f - panelWidth * 0.5f;
-        }
-        clampCelestialFxPanelPosition(screenWidth, Gdx.graphics.getHeight(), panelWidth, celestialFxPanelHeight);
-        return celestialFxPanelX;
-    }
-
-    public float resolveCelestialFxPanelY(int screenHeight, float panelHeight) {
-        if (!celestialFxPanelPositioned) {
-            return screenHeight * 0.5f - panelHeight * 0.5f;
-        }
-        clampCelestialFxPanelPosition(Gdx.graphics.getWidth(), screenHeight, celestialFxPanelWidth, panelHeight);
-        return celestialFxPanelY;
-    }
-
-    public void setCelestialFxPanelBounds(float x, float y, float width, float height) {
-        celestialFxPanelWidth = width;
-        celestialFxPanelHeight = height;
-        if (!celestialFxPanelPositioned) {
-            celestialFxPanelX = x;
-            celestialFxPanelY = y;
-        }
-        clampCelestialFxPanelPosition(Gdx.graphics.getWidth(), Gdx.graphics.getHeight(), width, height);
-    }
-
-    private boolean isInsideCelestialFxPanel(float x, float y) {
-        return x >= celestialFxPanelX && x <= celestialFxPanelX + celestialFxPanelWidth
-                && y >= celestialFxPanelY && y <= celestialFxPanelY + celestialFxPanelHeight;
-    }
-
-    private void clampCelestialFxPanelPosition(int screenWidth, int screenHeight, float panelWidth, float panelHeight) {
-        float maxX = Math.max(CELESTIAL_FX_PANEL_MARGIN_PX, screenWidth - panelWidth - CELESTIAL_FX_PANEL_MARGIN_PX);
-        float maxY = Math.max(CELESTIAL_FX_PANEL_MARGIN_PX, screenHeight - panelHeight - CELESTIAL_FX_PANEL_MARGIN_PX);
-        celestialFxPanelX = Math.max(CELESTIAL_FX_PANEL_MARGIN_PX, Math.min(celestialFxPanelX, maxX));
-        celestialFxPanelY = Math.max(CELESTIAL_FX_PANEL_MARGIN_PX, Math.min(celestialFxPanelY, maxY));
-    }
-
-    private void showCelestialFxStatus(String text) {
-        celestialFxStatusText = text;
-        celestialFxStatusTimer = CELESTIAL_FX_STATUS_DURATION_SEC;
-    }
-
-    private void clearCelestialFxStatus() {
-        celestialFxStatusText = "";
-        celestialFxStatusTimer = 0f;
-    }
-
-    public OrbitRenderMode getOrbitRenderMode() {
-        return orbitPredictor.getOrbitRenderMode();
-    }
-
-    public void setSimRenderer(SimRenderer renderer) {
-        this.simRenderer = renderer;
-    }
-
-    public void setMeasureTool(MeasureTool tool) {
-        this.measureTool = tool;
-    }
-
-    public void setDimensionToggle(Runnable toggle) {
-        this.dimensionToggle = toggle;
-    }
-
-    public void setCameraReset(Runnable reset) {
-        this.cameraReset = reset;
-    }
-
-    public MeasureTool getMeasureTool() {
-        return measureTool;
+    private void resetPointerDragging() {
+        leftDragging = false;
+        rightDragging = false;
     }
 }

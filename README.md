@@ -36,13 +36,14 @@ The bundled Solar System contains 20+ simulated bodies (Sun, 8 planets, 4 dwarf 
 ## Features
 
 - **N-body simulation** — RK4 integrator over full 3D state vectors with adaptive timestep
+- **Runtime spin modes** — switch between inertial, orbit-relative, and full spin-dynamics behavior, with optional spin-state and face-lock sub-engines in dynamics mode
 - **Multiple celestial bodies + statistical belts** — Sun, planets, dwarf planets, major moons, asteroid belt, and Kuiper belt
 - **Textured rendering** — dedicated shaders for planets, star glow, atmospheres, clouds, rings, night-side blending, and projected ring shadows
 - **Dual camera modes** — orthographic top view and perspective free-cam with orbital follow frames
 - **Overlay system** — orbit trails, Keplerian orbit predictors (multiple render styles), and body spin-axis indicators
 - **Time warp** from 1× to 1,000,000,000× across 10 presets
 - **Visual scale** — logarithmic/power-law sizing with overlap detection to keep all bodies visible
-- **Interactive tools** — hover tooltip, click-to-click measurement, scale bar, full HUD, and an in-app celestial FX menu
+- **Interactive tools** — hover tooltip, click-to-click measurement, scale bar, full HUD, and an in-app settings menu for overlays, simulation, physics and FX management
 - **Ambient soundtrack** — Stellardrone "Between The Rings" (CC BY 4.0)
 - **Data-driven architecture** — universe manifest + per-system JSON with validated orbital and spin-axis data
 
@@ -99,18 +100,21 @@ The application starts by loading the universe manifest (`assets/data/universe.j
 | `F`                    | Clear follow target                                                                     |
 | `P`                    | Cycle follow mode (free / orbit upright / orbit plane / orbit axial / rotation axial)   |
 | `V`                    | Toggle visual scale                                                                     |
-| `T`                    | Cycle overlays (trails / trails+orbits / trails+orbits+spin / none)                     |
+| `T`                    | Cycle orbit overlays (trails / trails+orbits / none)                                    |
 | `Y`                    | Cycle orbit predictor style (dashed / solid)                                            |
 | `C`                    | Toggle camera mode (top view / free-cam)                                                |
 | `L`                    | Toggle orbital dimensionality (2D flat / 3D inclined)                                   |
 | `Z`                    | Cycle free-cam FOV (5° / 60° / auto-adaptive)                                           |
 | `R`                    | Reset camera to nearest system star                                                     |
-| `X`                    | Open celestial FX menu (`Clouds`, `Surface day/night`, `Ring shadows`)                  |
+| `X`                    | Open settings menu (`Overlays`, `Simulation`, `Physics`, `FX`, `Restore Defaults`)      |
+| `Hold Shift`           | Replace the standard body hover tooltip with advanced dynamics details only             |
 | `M`                    | Toggle measurement tool (`Ctrl+click` world-lock, `Shift+click` body snap, `Esc` close) |
 | `H`                    | Show/hide controls legend                                                               |
 | `Q`                    | Quit                                                                                    |
 
-While the FX menu is open, use `Up`/`Down` to select an entry, `Enter` or `Space` to toggle it, `1`–`3` for quick toggles, and `Esc` or `X` to close it.
+While the settings menu is open, use `Up`/`Down` to select an entry, `Enter` or `Space` to open or toggle it, `1`–`5` for quick access from the main page, and `Esc` or `X` to close it. The `Overlays` page owns the advanced axis toggles (`Show Orbit Normal`, `Show Spin Axis`), `Simulation` now contains `Time Warp`, `Advanced Tooltip Data`, plus future state actions, and `T` only cycles the quick trail/orbit overlay presets.
+
+Body hover tooltips support two dynamics-detail modes: hold `Shift` to temporarily replace the standard tooltip with advanced dynamics diagnostics only, or enable `Simulation > Advanced Tooltip Data` to keep those diagnostics appended under the standard body data at all times.
 
 While the measurement tool is active, plain click places screen-locked anchors that stay visually stable relative to the current view, `Ctrl+click` places an absolute world-space anchor, `Shift+click` snaps to the nearest visible celestial body when one is within the snap tolerance, and `Esc` or `M` closes the tool.
 
@@ -154,6 +158,7 @@ gravitas/
 - **Step budget**: 8 to 500 steps/frame, balancing precision and performance
 - **Gravitation**: Full N-body (O(n²) force evaluation per step)
 - **Collisions**: Sphere-based detection with object removal
+- **SpinDynamicsEngine**: acts as the runtime spin controller. It supports three top-level modes: inertial, orbit-relative, and spin dynamics. In spin-dynamics mode it can run two coordinated sub-systems: spin-state dynamics for axis/rate evolution and face-lock dynamics for near-synchronous meridian restoration
 
 ### Rendering Pipeline
 
@@ -198,6 +203,7 @@ Optional visual/physical sections:
 - `ring` — `innerRadius`, `outerRadius`, `texture`, `color`, `opacity`
 - `clouds` — optional object controlling cloud rendering; see the dedicated section below
 - `spinAxis` — dedicated orientation object for the body's pole; see the dedicated section below
+- `spinPhysics` — optional runtime spin-dynamics parameters; see the dedicated section below
 - `atmosphereScaleHeight`, `atmosphereDensitySeaLevel`
 
 ### Surface Texture Schema
@@ -278,12 +284,57 @@ Notes:
 
 ### Spin Axis
 
-Spin orientation uses a dedicated `spinAxis` object, resolved at load time into a world/ecliptic pole vector.
+Spin orientation uses a dedicated `spinAxis` object. At load time Gravitas resolves it into the body's initial inertial pole, then the runtime spin system evolves that pole from the current physical state.
 
 Supported authoring modes:
 
 - **`absolute`** — `rightAscension`, `declination` (radians)
-- **`orbital-relative`** — `tilt`, `azimuth` (radians)
+- **`orbit-relative`** — `tilt`, `azimuth` (radians)
+- **`initialRotationPhase`** — optional axial phase in radians at simulation start; seeds the body's authored `t=0` meridian orientation for all spin modes
+
+### Spin Physics
+
+Optional `spinPhysics` fields drive the runtime spin-dynamics system:
+
+- **`inertiaFactor`** — normalized polar moment of inertia $\lambda = C/(MR^2)$
+- **`k2OverQ`** — effective tidal response strength used by the equilibrium-tide damping model
+- **`preferredLockPhase`** — optional meridian offset in radians used by the face-lock dynamics when the body is near-synchronous with its current parent; defaults to `0.0`
+
+Example:
+
+```json
+"spinPhysics": {
+   "inertiaFactor": 0.3307,
+   "k2OverQ": 0.0,
+   "preferredLockPhase": 0.0
+}
+```
+
+Example `spinAxis` with explicit initial phase:
+
+```json
+"spinAxis": {
+   "type": "orbit-relative",
+   "tilt": 0.35,
+   "azimuth": 0.0,
+   "initialRotationPhase": 1.57
+}
+```
+
+Notes:
+
+- `spinPhysics` is optional.
+- If `k2OverQ` is omitted or zero, the body keeps inertial spin with no tidal damping.
+- If `spinAxis.initialRotationPhase` is omitted, Gravitas assumes `0.0` and seeds the load-time `baseRotationAngle` from that default.
+- If `preferredLockPhase` is omitted, Gravitas assumes `0.0`, meaning the body's current `rotationAngle = 0` meridian is the preferred locked face.
+- `initialRotationPhase` and `preferredLockPhase` are intentionally separate: the first sets the body's authored orientation at `t=0`, while the second defines which meridian the dynamic face-lock prefers when synchronization is active.
+- Runtime orbit normals are derived from the body's current parent-relative state vectors, not reconstructed from static Keplerian elements in the camera or renderer.
+
+Runtime spin modes available from the `X` settings menu:
+
+- `INERTIAL` — keeps the load-time inertial spin axis and advances the authored `rotationPeriod` unchanged
+- `ORBIT RELATIVE` — reprojects the load-time tilt and meridian phase into the instantaneous orbit frame while keeping the authored `rotationPeriod`
+- `SPIN DYNAMICS` — enables the runtime dynamic solver; `Spin State Engine` and `Face Lock Engine` can then be toggled independently
 
 ### Statistical Belts
 
@@ -350,9 +401,14 @@ Add a new entry to the target system's `bodies` array — e.g. `assets/data/syst
   },
   "rotationPeriod": 86400,
   "spinAxis": {
-    "type": "orbital-relative",
+    "type": "orbit-relative",
     "tilt": 0.35,
-    "azimuth": 0.0
+    "azimuth": 0.0,
+    "initialRotationPhase": 0.0
+  },
+  "spinPhysics": {
+    "inertiaFactor": 0.3307,
+    "k2OverQ": 0.0
   },
   "semiMajorAxis": 3.0e11,
   "eccentricity": 0.05,

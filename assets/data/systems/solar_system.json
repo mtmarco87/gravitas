@@ -1,5 +1,5 @@
 {
-  "_comment": "Gravitas solar system data. Orbital elements from NASA JPL Horizons. Spin-axis data from NAIF pck00011.tpc evaluated at J2000 where available; Eris uses the published Dysnomia orbit-pole proxy, while Makemake currently uses an explicit zero-tilt orbital-relative fallback because no unique absolute pole solution is published.",
+  "_comment": "Gravitas solar system data. Orbital elements from NASA JPL Horizons. Spin-axis data from NAIF pck00011.tpc evaluated at J2000 where available; Eris uses the published Dysnomia orbit-pole proxy, while Makemake currently uses an explicit zero-tilt orbit-relative fallback because no unique absolute pole solution is published. Spin-physics is opt-in: inertiaFactor is seeded where a stable literature value is already well known, while k2OverQ is seeded only for bodies with a direct observational or mission-constrained estimate; the remaining bodies stay unseeded or at zero until a defensible dissipative source is curated.",
   "_units": {
     "mass": "kg",
     "radius": "m",
@@ -14,7 +14,11 @@
     "spinAxis.rightAscension": "radians (north-pole RA in ICRF/J2000)",
     "spinAxis.declination": "radians (north-pole Dec in ICRF/J2000)",
     "spinAxis.tilt": "radians (tilt from orbital normal)",
-    "spinAxis.azimuth": "radians (in orbital plane, measured from projected world +X axis)"
+    "spinAxis.azimuth": "radians (in orbital plane, measured from projected world +X axis)",
+    "spinAxis.initialRotationPhase": "radians (optional authored axial phase at simulation epoch t=0; seeds the body's initial meridian orientation for all spin modes)",
+    "spinPhysics.inertiaFactor": "dimensionless (normalized polar moment of inertia, C/(M R^2))",
+    "spinPhysics.k2OverQ": "dimensionless (effective equilibrium-tide response coefficient; 0 disables tidal damping)",
+    "spinPhysics.preferredLockPhase": "radians (optional preferred face-lock phase offset relative to the parent direction in the orbital plane)"
   },
   "_conventions": {
     "periapsisAngle": "The JSON stores argumentOfPeriapsis = omega. The longitude of periapsis is derived as longitudeOfAscendingNode + argumentOfPeriapsis (varpi = Omega + omega)."
@@ -40,6 +44,10 @@
         "type": "absolute",
         "rightAscension": 4.99391059,
         "declination": 1.11474179
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.07,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -67,6 +75,10 @@
         "type": "absolute",
         "rightAscension": 4.90455497,
         "declination": 1.07190269
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.346,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -96,6 +108,10 @@
         "rightAscension": 4.76056007,
         "declination": 1.17216313
       },
+      "spinPhysics": {
+        "inertiaFactor": 0.337,
+        "k2OverQ": 0.0
+      },
       "atmosphereScaleHeight": 15900,
       "atmosphereDensitySeaLevel": 65.0,
       "semiMajorAxis": 108210000000.0,
@@ -124,6 +140,10 @@
         "type": "absolute",
         "rightAscension": 0.0,
         "declination": 1.57079633
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.3307,
+        "k2OverQ": 0.001079
       },
       "atmosphereScaleHeight": 8500,
       "atmosphereDensitySeaLevel": 1.225,
@@ -157,6 +177,10 @@
         "rightAscension": 4.65754608,
         "declination": 1.14565337
       },
+      "spinPhysics": {
+        "inertiaFactor": 0.3929,
+        "k2OverQ": 0.000655
+      },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
       "semiMajorAxis": 384400000.0,
@@ -182,8 +206,12 @@
       "rotationPeriod": 88642,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 5.53739219,
-        "declination": 0.95002662
+        "rightAscension": 5.54457688,
+        "declination": 0.9230425
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.3644,
+        "k2OverQ": 0.001804
       },
       "atmosphereScaleHeight": 11100,
       "atmosphereDensitySeaLevel": 0.02,
@@ -209,8 +237,8 @@
       "rotationPeriod": 27553,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 5.54439995,
-        "declination": 0.92303959
+        "rightAscension": 5.55037172,
+        "declination": 0.94152501
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -236,8 +264,8 @@
       "rotationPeriod": 109044,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 5.52670826,
-        "declination": 0.93392429
+        "rightAscension": 5.5682485,
+        "declination": 0.91565881
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -264,8 +292,12 @@
       "rotationPeriod": 35730,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 4.67848079,
-        "declination": 1.12566424
+        "rightAscension": 4.67847016,
+        "declination": 1.12565539
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.2756,
+        "k2OverQ": 1.102e-5
       },
       "atmosphereScaleHeight": 27000,
       "atmosphereDensitySeaLevel": 0.16,
@@ -297,8 +329,12 @@
       "rotationPeriod": 152853,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 4.67835506,
+        "rightAscension": 4.67673182,
         "declination": 1.12573737
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.37824,
+        "k2OverQ": 0.015
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -325,7 +361,11 @@
       "spinAxis": {
         "type": "absolute",
         "rightAscension": 4.67887866,
-        "declination": 1.1259119
+        "declination": 1.13378763
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.346,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -351,8 +391,12 @@
       "rotationPeriod": 618153,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 4.68731511,
-        "declination": 1.1261633
+        "rightAscension": 4.68632837,
+        "declination": 1.124623
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.3115,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -378,8 +422,12 @@
       "rotationPeriod": 1441931,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 4.69004877,
-        "declination": 1.13149695
+        "rightAscension": 4.68131501,
+        "declination": 1.12891553
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.3549,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 0,
       "atmosphereDensitySeaLevel": 0,
@@ -409,6 +457,10 @@
         "rightAscension": 0.70841169,
         "declination": 1.4579957
       },
+      "spinPhysics": {
+        "inertiaFactor": 0.22,
+        "k2OverQ": 1.59e-4
+      },
       "atmosphereScaleHeight": 59500,
       "atmosphereDensitySeaLevel": 0.19,
       "semiMajorAxis": 1432000000000.0,
@@ -423,6 +475,37 @@
         "texture": "saturn_rings.png",
         "opacity": 0.9
       }
+    },
+    {
+      "name": "Enceladus",
+      "type": "MOON",
+      "parent": "Saturn",
+      "mass": 1.08022e20,
+      "radius": 252000.0,
+      "color": {
+        "base": "F0F0F0"
+      },
+      "texture": {
+        "base": "saturn-enceladus.jpg"
+      },
+      "rotationPeriod": 118386,
+      "spinAxis": {
+        "type": "absolute",
+        "rightAscension": 0.70965087,
+        "declination": 1.45769899
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.3305,
+        "k2OverQ": 0.0
+      },
+      "atmosphereScaleHeight": 0,
+      "atmosphereDensitySeaLevel": 0,
+      "semiMajorAxis": 238037000.0,
+      "eccentricity": 0.00635,
+      "inclination": 0.4896,
+      "longitudeOfAscendingNode": 2.95845,
+      "meanAnomalyAtEpoch": 0.12136,
+      "argumentOfPeriapsis": 2.36462
     },
     {
       "name": "Titan",
@@ -443,6 +526,10 @@
         "rightAscension": 0.68910311,
         "declination": 1.45609154
       },
+      "spinPhysics": {
+        "inertiaFactor": 0.341,
+        "k2OverQ": 0.0
+      },
       "atmosphereScaleHeight": 21000,
       "atmosphereDensitySeaLevel": 5.3,
       "semiMajorAxis": 1221870000.0,
@@ -451,33 +538,6 @@
       "longitudeOfAscendingNode": 2.95378,
       "meanAnomalyAtEpoch": 2.8525,
       "argumentOfPeriapsis": 2.86948
-    },
-    {
-      "name": "Enceladus",
-      "type": "MOON",
-      "parent": "Saturn",
-      "mass": 1.08022e20,
-      "radius": 252000.0,
-      "color": {
-        "base": "F0F0F0"
-      },
-      "texture": {
-        "base": "saturn-enceladus.jpg"
-      },
-      "rotationPeriod": 118386,
-      "spinAxis": {
-        "type": "absolute",
-        "rightAscension": 0.70965087,
-        "declination": 1.45769899
-      },
-      "atmosphereScaleHeight": 0,
-      "atmosphereDensitySeaLevel": 0,
-      "semiMajorAxis": 238037000.0,
-      "eccentricity": 0.00635,
-      "inclination": 0.4896,
-      "longitudeOfAscendingNode": 2.95845,
-      "meanAnomalyAtEpoch": 0.12136,
-      "argumentOfPeriapsis": 2.36462
     },
     {
       "name": "Uranus",
@@ -497,6 +557,10 @@
         "type": "absolute",
         "rightAscension": 4.49092415,
         "declination": -0.26485371
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.23,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 27700,
       "atmosphereDensitySeaLevel": 0.42,
@@ -530,7 +594,11 @@
       "spinAxis": {
         "type": "absolute",
         "rightAscension": 5.22481765,
-        "declination": 0.75852009
+        "declination": 0.74962518
+      },
+      "spinPhysics": {
+        "inertiaFactor": 0.23,
+        "k2OverQ": 0.0
       },
       "atmosphereScaleHeight": 19700,
       "atmosphereDensitySeaLevel": 0.45,
@@ -562,7 +630,7 @@
       "rotationPeriod": -507773,
       "spinAxis": {
         "type": "absolute",
-        "rightAscension": 5.20895231,
+        "rightAscension": 5.20895232,
         "declination": 0.35434305
       },
       "atmosphereScaleHeight": 0,
@@ -587,7 +655,7 @@
       "texture": {
         "base": "pluto.jpg"
       },
-      "rotationPeriod": -551856,
+      "rotationPeriod": 551856,
       "spinAxis": {
         "type": "absolute",
         "rightAscension": 2.32116573,
@@ -657,7 +725,7 @@
       "argumentOfPeriapsis": 1.28285
     },
     {
-      "_comment": "Makemake: orbital elements from JPL Horizons (osculating, J2000.0). Physical data from Ortiz et al. 2012 (radius), Parker et al. 2016 (mass est.), JPL SBDB (rotation). A unique pole RA/Dec is not currently published by NAIF/JPL/IAU, so the data uses an explicit orbital-relative zero-tilt fallback instead of a fabricated absolute pole.",
+      "_comment": "Makemake: orbital elements from JPL Horizons (osculating, J2000.0). Physical data from Ortiz et al. 2012 (radius), Parker et al. 2016 (mass est.), JPL SBDB (rotation). A unique pole RA/Dec is not currently published by NAIF/JPL/IAU, so the data uses an explicit orbit-relative zero-tilt fallback instead of a fabricated absolute pole.",
       "name": "Makemake",
       "type": "DWARF_PLANET",
       "parent": "Sun",
@@ -671,7 +739,7 @@
       },
       "rotationPeriod": 82176,
       "spinAxis": {
-        "type": "orbital-relative",
+        "type": "orbit-relative",
         "tilt": 0.0,
         "azimuth": 0.0
       },

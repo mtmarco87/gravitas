@@ -1,4 +1,4 @@
-package com.gravitas.rendering.orbit;
+package com.gravitas.settings.enums;
 
 public enum OrbitRenderMode {
     CPU_DASHED_SIMPLE("CPU Dash", true),

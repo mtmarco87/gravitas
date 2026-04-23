@@ -1,6 +1,6 @@
-package com.gravitas.physics;
+package com.gravitas.physics.orbit;
 
-import com.gravitas.entities.SimObject;
+import com.gravitas.entities.core.SimObject;
 
 /**
  * Runge-Kutta 4 numerical integrator for N-body orbital mechanics.

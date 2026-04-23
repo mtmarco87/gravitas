@@ -1,9 +1,14 @@
-package com.gravitas.rendering.celestial_body;
+package com.gravitas.settings;
 
-public final class CelestialFxSettings {
+import com.gravitas.settings.enums.CloudCompositingMode;
+import com.gravitas.settings.enums.CloudFxMode;
+import com.gravitas.settings.enums.CloudTerminatorMode;
+
+public final class FxSettings {
 
     public static final float VALUE_STEP = 0.01f;
 
+    private static final boolean DEFAULT_MASTER_ENABLED = true;
     private static final CloudFxMode DEFAULT_CLOUD_FX_MODE = CloudFxMode.ALL;
     private static final CloudCompositingMode DEFAULT_CLOUD_COMPOSITING_MODE = CloudCompositingMode.ADAPTIVE;
     private static final CloudTerminatorMode DEFAULT_CLOUD_TERMINATOR_MODE = CloudTerminatorMode.NORMAL;
@@ -19,101 +24,7 @@ public final class CelestialFxSettings {
     private static final float DEFAULT_ATMOSPHERE_DENSE_NIGHT_OUTER_FLOOR = 0.25f;
     private static final float DEFAULT_ATMOSPHERE_DENSE_NIGHT_INNER_FLOOR = 0.10f;
 
-    public enum CloudFxMode {
-        ALL("ALL", true, true),
-        TEXTURE_ONLY("TEXTURE ONLY", true, false),
-        OFF("OFF", false, false);
-
-        private final String hudLabel;
-        private final boolean texturesEnabled;
-        private final boolean proceduralEnabled;
-
-        CloudFxMode(String hudLabel, boolean texturesEnabled, boolean proceduralEnabled) {
-            this.hudLabel = hudLabel;
-            this.texturesEnabled = texturesEnabled;
-            this.proceduralEnabled = proceduralEnabled;
-        }
-
-        public String hudLabel() {
-            return hudLabel;
-        }
-
-        public boolean texturesEnabled() {
-            return texturesEnabled;
-        }
-
-        public boolean proceduralEnabled() {
-            return proceduralEnabled;
-        }
-
-        public boolean isOff() {
-            return this == OFF;
-        }
-
-        public CloudFxMode next() {
-            CloudFxMode[] modes = values();
-            return modes[(ordinal() + 1) % modes.length];
-        }
-    }
-
-    public enum CloudCompositingMode {
-        EQUAL_BLEND("BALANCED", 0),
-        TEXTURE_DOMINANT("TEXTURE LED", 1),
-        ADAPTIVE("ADAPTIVE", 2);
-
-        private final String hudLabel;
-        private final int shaderValue;
-
-        CloudCompositingMode(String hudLabel, int shaderValue) {
-            this.hudLabel = hudLabel;
-            this.shaderValue = shaderValue;
-        }
-
-        public String hudLabel() {
-            return hudLabel;
-        }
-
-        public int shaderValue() {
-            return shaderValue;
-        }
-
-        public CloudCompositingMode next() {
-            CloudCompositingMode[] modes = values();
-            return modes[(ordinal() + 1) % modes.length];
-        }
-    }
-
-    public enum CloudTerminatorMode {
-        NORMAL("NORMAL", 0),
-        EXTENDED("EXTENDED", 1),
-        OFF_SHARP("OFF/SHARP", 2);
-
-        private final String hudLabel;
-        private final int shaderValue;
-
-        CloudTerminatorMode(String hudLabel, int shaderValue) {
-            this.hudLabel = hudLabel;
-            this.shaderValue = shaderValue;
-        }
-
-        public String hudLabel() {
-            return hudLabel;
-        }
-
-        public int shaderValue() {
-            return shaderValue;
-        }
-
-        public CloudTerminatorMode next() {
-            CloudTerminatorMode[] modes = values();
-            return modes[(ordinal() + 1) % modes.length];
-        }
-    }
-
-    // ---------------------------------------------------------------------
-    // Cloud FX settings
-    // ---------------------------------------------------------------------
-
+    private boolean masterEnabled;
     private CloudFxMode cloudFxMode;
     private CloudCompositingMode cloudCompositingMode;
     private CloudTerminatorMode cloudTerminatorMode;
@@ -121,29 +32,20 @@ public final class CelestialFxSettings {
     private float cloudTextureAlphaWeight;
     private float cloudProceduralAlphaWeight;
     private boolean cloudDayNightEnabled;
-
-    // ---------------------------------------------------------------------
-    // Lighting FX settings
-    // ---------------------------------------------------------------------
-
     private boolean dayNightEnabled;
     private boolean ringShadowEnabled;
-
-    // ---------------------------------------------------------------------
-    // Atmosphere FX settings
-    // ---------------------------------------------------------------------
-
     private float atmosphereNightOuterFloor;
     private float atmosphereNightInnerFloor;
     private float atmosphereDenseNightOuterFloor;
     private float atmosphereDenseNightInnerFloor;
     private boolean atmosphereDayNightEnabled;
 
-    public CelestialFxSettings() {
+    public FxSettings() {
         resetToDefaults();
     }
 
     public void resetToDefaults() {
+        masterEnabled = DEFAULT_MASTER_ENABLED;
         cloudFxMode = DEFAULT_CLOUD_FX_MODE;
         cloudCompositingMode = DEFAULT_CLOUD_COMPOSITING_MODE;
         cloudTerminatorMode = DEFAULT_CLOUD_TERMINATOR_MODE;
@@ -151,10 +53,8 @@ public final class CelestialFxSettings {
         cloudTextureAlphaWeight = DEFAULT_CLOUD_TEXTURE_ALPHA_WEIGHT;
         cloudProceduralAlphaWeight = DEFAULT_CLOUD_PROCEDURAL_ALPHA_WEIGHT;
         cloudDayNightEnabled = DEFAULT_CLOUD_DAY_NIGHT_ENABLED;
-
         dayNightEnabled = DEFAULT_DAY_NIGHT_ENABLED;
         ringShadowEnabled = DEFAULT_RING_SHADOW_ENABLED;
-
         atmosphereNightOuterFloor = DEFAULT_ATMOSPHERE_NIGHT_OUTER_FLOOR;
         atmosphereNightInnerFloor = DEFAULT_ATMOSPHERE_NIGHT_INNER_FLOOR;
         atmosphereDenseNightOuterFloor = DEFAULT_ATMOSPHERE_DENSE_NIGHT_OUTER_FLOOR;
@@ -162,8 +62,20 @@ public final class CelestialFxSettings {
         atmosphereDayNightEnabled = DEFAULT_ATMOSPHERE_DAY_NIGHT_ENABLED;
     }
 
+    public boolean isMasterEnabled() {
+        return masterEnabled;
+    }
+
+    public void toggleMasterEnabled() {
+        masterEnabled = !masterEnabled;
+    }
+
     public CloudFxMode getCloudFxMode() {
         return cloudFxMode;
+    }
+
+    public CloudFxMode getEffectiveCloudFxMode() {
+        return masterEnabled ? cloudFxMode : CloudFxMode.OFF;
     }
 
     public void cycleCloudFxMode() {
@@ -175,7 +87,7 @@ public final class CelestialFxSettings {
     }
 
     public boolean isCloudDayNightActive() {
-        return dayNightEnabled && cloudDayNightEnabled;
+        return isSurfaceDayNightEnabled() && cloudDayNightEnabled;
     }
 
     public void toggleCloudDayNightEnabled() {
@@ -184,6 +96,10 @@ public final class CelestialFxSettings {
 
     public boolean isDayNightEnabled() {
         return dayNightEnabled;
+    }
+
+    public boolean isSurfaceDayNightEnabled() {
+        return masterEnabled && dayNightEnabled;
     }
 
     public void toggleDayNightEnabled() {
@@ -303,7 +219,7 @@ public final class CelestialFxSettings {
     }
 
     public boolean isAtmosphereDayNightActive() {
-        return dayNightEnabled && atmosphereDayNightEnabled;
+        return isSurfaceDayNightEnabled() && atmosphereDayNightEnabled;
     }
 
     public void toggleAtmosphereDayNightEnabled() {

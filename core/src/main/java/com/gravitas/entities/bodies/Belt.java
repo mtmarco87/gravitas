@@ -1,14 +1,19 @@
-package com.gravitas.entities;
+package com.gravitas.entities.bodies;
+
+import com.gravitas.entities.core.SimObject;
+import com.gravitas.entities.core.UniverseObject;
+import com.gravitas.entities.regions.SpaceRegion;
 
 /**
  * Static data describing a statistical asteroid/debris belt (e.g. Main Belt,
  * Kuiper Belt). Not physics-simulated; rendered as a cloud of dots.
  */
-public class Belt {
+public class Belt extends UniverseObject {
 
-    public final String name;
-    /** Name of the parent body this belt orbits (e.g. "Sun"). */
-    public final String parentName;
+    /** Region this belt was authored from, if any. */
+    public SpaceRegion sourceRegion;
+    /** Body this belt orbits around. */
+    public final SimObject parent;
     /** Inner edge of the belt annulus (meters from parent). */
     public final double innerRadius;
     /** Outer edge of the belt annulus (meters from parent). */
@@ -18,10 +23,10 @@ public class Belt {
     /** Display colour (RGBA packed int). */
     public final int color;
 
-    public Belt(String name, String parentName, double innerRadius, double outerRadius,
+    public Belt(String name, SimObject parent, double innerRadius, double outerRadius,
             int particleCount, int color) {
-        this.name = name;
-        this.parentName = parentName;
+        super(name);
+        this.parent = parent;
         this.innerRadius = innerRadius;
         this.outerRadius = outerRadius;
         this.particleCount = particleCount;

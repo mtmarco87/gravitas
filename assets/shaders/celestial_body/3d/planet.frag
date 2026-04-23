@@ -15,7 +15,7 @@ varying vec3 v_worldPos;
 uniform sampler2D u_texture;
 uniform sampler2D u_nightTexture;
 uniform float u_hasNightTexture;
-uniform float u_enableCelestialFx;
+uniform float u_enableDayNightMode;
 uniform float u_isStar;        // 1.0 for stars (no limb darkening)
 uniform vec3  u_baseColor;     // fallback colour for near-black regions
 uniform vec3  u_lightDirWorld;
@@ -40,7 +40,7 @@ void main() {
     float fill = 1.0 - smoothstep(0.01, 0.06, lum);
     texColor.rgb = mix(texColor.rgb, u_baseColor, fill);
 
-    if (u_enableCelestialFx > 0.5 && u_isStar < 0.5) {
+    if (u_enableDayNightMode > 0.5 && u_isStar < 0.5) {
         float daylight = smoothstep(-0.10, 0.10, dot(worldN, normalize(u_lightDirWorld)));
         vec3 litBase = texColor.rgb * mix(0.14, 1.0, daylight);
         if (u_hasNightTexture > 0.5) {

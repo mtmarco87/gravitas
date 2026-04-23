@@ -16,7 +16,7 @@ final class WorldProjectionHelper {
     }
 
     Vector2 worldToScreen(double wx, double wy, double wz) {
-        if (cameraState.getMode() == WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() == CameraMode.FREE_CAM) {
             return worldToScreenFreeCam(wx, wy, wz);
         }
         return worldToScreenTopView(wx, wy);
@@ -25,7 +25,7 @@ final class WorldProjectionHelper {
     ProjectedEllipse projectSphereEllipse(double worldRadius, double wx, double wy, double wz) {
         Vector2 screenCenter = worldToScreen(wx, wy, wz);
         float fallbackRadius = worldSphereRadiusToScreen(worldRadius, wx, wy, wz);
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return new ProjectedEllipse(screenCenter.x, screenCenter.y, fallbackRadius, 0f, 0f,
                     fallbackRadius);
         }
@@ -113,7 +113,7 @@ final class WorldProjectionHelper {
     }
 
     double[] screenToWorldOnFocusPlane(float screenX, float screenY) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             double[] world = screenToWorld(screenX, screenY);
             return new double[] { world[0], world[1], cameraState.getFocusZ() };
         }
@@ -151,7 +151,7 @@ final class WorldProjectionHelper {
     }
 
     float worldSphereRadiusToScreen(double worldRadius, double wx, double wy, double wz) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return worldRadiusToScreen(worldRadius);
         }
 
@@ -170,7 +170,7 @@ final class WorldProjectionHelper {
     }
 
     double screenToWorldSphereRadius(float screenPixels, double wx, double wy, double wz) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return screenPixels * cameraState.metersPerPixelInternal();
         }
 
@@ -185,7 +185,7 @@ final class WorldProjectionHelper {
     }
 
     double screenToWorldLengthAtDepth(float screenPixels, double depth) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return screenPixels * cameraState.metersPerPixelInternal();
         }
         if (depth <= 0.0) {
@@ -206,7 +206,7 @@ final class WorldProjectionHelper {
     }
 
     double depthOf(double wx, double wy, double wz) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return 1.0;
         }
         return (wx - cameraState.getCamPosX()) * cameraState.camFwdXInternal()
@@ -215,7 +215,7 @@ final class WorldProjectionHelper {
     }
 
     double distanceFromCamera(double wx, double wy, double wz) {
-        if (cameraState.getMode() != WorldCamera.CameraMode.FREE_CAM) {
+        if (cameraState.getMode() != CameraMode.FREE_CAM) {
             return 1.0;
         }
         double dx = wx - cameraState.getCamPosX();
