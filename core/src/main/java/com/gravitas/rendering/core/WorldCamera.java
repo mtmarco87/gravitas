@@ -763,14 +763,14 @@ public class WorldCamera {
     }
 
     /**
-     * Builds the pure rigid-body orientation matrix from the body's material frame.
-     * This excludes translation and scale so billboard effects can reuse the
-     * exact same orientation convention as the mesh renderer.
+     * Builds the pure rigid-body orientation matrix from an object's material
+     * frame. This excludes translation and scale so billboard effects can reuse
+     * the exact same orientation convention as the mesh renderer.
      */
-    public void buildBodyOrientationMatrix(Matrix4 out, CelestialBody body) {
-        body.getRightAxis(scratchRotatedVector);
-        computeBodySpinAxis(body, scratchBodySpinAxis);
-        body.getPrimeMeridianAxis(scratchBodyGuideAxis);
+    public void buildObjectOrientationMatrix(Matrix4 out, SimObject object) {
+        object.getRightAxis(scratchRotatedVector);
+        computeObjectSpinAxis(object, scratchBodySpinAxis);
+        object.getPrimeMeridianAxis(scratchBodyGuideAxis);
 
         setBodyAxesMatrix(
                 out,
@@ -780,11 +780,11 @@ public class WorldCamera {
     }
 
     /**
-     * Builds the pure body-axis frame matrix used by paths that intentionally
+     * Builds the pure object-axis frame matrix used by paths that intentionally
      * exclude axial twist and only care about the current spin axis orientation.
      */
-    public void buildBodyAxisFrameMatrix(Matrix4 out, CelestialBody body) {
-        computeBodySpinAxis(body, scratchBodySpinAxis);
+    public void buildObjectAxisFrameMatrix(Matrix4 out, SimObject object) {
+        computeObjectSpinAxis(object, scratchBodySpinAxis);
 
         if (!GeometryUtils.projectOntoPlane(0.0, 0.0, 1.0,
                 scratchBodySpinAxis[0], scratchBodySpinAxis[1], scratchBodySpinAxis[2],
@@ -870,15 +870,15 @@ public class WorldCamera {
         m[Matrix4.M33] = 1f;
     }
 
-    public void getBodySpinAxis(CelestialBody body, double[] out) {
-        computeBodySpinAxis(body, out);
+    public void getObjectSpinAxis(SimObject object, double[] out) {
+        computeObjectSpinAxis(object, out);
     }
 
     /**
      * Builds a model matrix that places an object at (wx, wy, wz) in world space,
      * applies floating-origin subtraction (camera position removed in double
      * precision before casting to float), scales by the given radius, and
-     * applies the body's full material orientation.
+     * applies the object's full material orientation.
      *
      * @param out   the Matrix4 to fill (modified in place)
      * @param wx    world X (meters, double)
@@ -889,47 +889,53 @@ public class WorldCamera {
     public void buildOrientedModelMatrix(Matrix4 out,
             double wx, double wy, double wz,
             double scale,
-            CelestialBody body) {
+            SimObject object) {
         float tx = (float) (wx - camPosX);
         float ty = (float) (wy - camPosY);
         float tz = (float) (wz - camPosZ);
 
         out.idt();
         out.translate(tx, ty, tz);
-        buildBodyOrientationMatrix(followFrameBodyMatrix, body);
+        buildObjectOrientationMatrix(followFrameBodyMatrix, object);
         out.mul(followFrameBodyMatrix);
         out.scale((float) scale, (float) scale, (float) scale);
     }
 
     /**
-     * Builds a model matrix aligned to the body's spin-axis frame but without
+     * Builds a model matrix aligned to the object's spin-axis frame but without
      * applying its current axial twist.
      */
     public void buildAxisFrameModelMatrix(Matrix4 out,
             double wx, double wy, double wz,
             double scale,
-            CelestialBody body) {
+            SimObject object) {
         float tx = (float) (wx - camPosX);
         float ty = (float) (wy - camPosY);
         float tz = (float) (wz - camPosZ);
 
         out.idt();
         out.translate(tx, ty, tz);
-        buildBodyAxisFrameMatrix(followFrameBodyMatrix, body);
+        buildObjectAxisFrameMatrix(followFrameBodyMatrix, object);
         out.mul(followFrameBodyMatrix);
         out.scale((float) scale, (float) scale, (float) scale);
     }
 
-    private void computeBodySpinAxis(CelestialBody body, double[] out) {
-        body.getSpinAxis(out);
-        double outLen = Math.sqrt(GeometryUtils.lengthSq(out[0], out[1], out[2]));
-        if (outLen <= 1e-12) {
+    private void computeObjectSpinAxis(SimObject object, double[] out) {
+        object.getSpinAxis(out);
+        if (!GeometryUtils.normalize(out[0], out[1], out[2], out)) {
+            computeObjectReferenceAxis(object, out);
+        }
+    }
+
+    private void computeObjectReferenceAxis(SimObject object, double[] out) {
+        if (object instanceof CelestialBody body) {
             computeReferenceOrbitalNormal(body, out);
             return;
         }
-        out[0] /= outLen;
-        out[1] /= outLen;
-        out[2] /= outLen;
+
+        out[0] = 0.0;
+        out[1] = 0.0;
+        out[2] = 1.0;
     }
 
     private void computeReferenceOrbitalNormal(CelestialBody body, double[] out) {
@@ -1214,7 +1220,7 @@ public class WorldCamera {
                 baseFwdX = body.parent.x - body.x;
                 baseFwdY = body.parent.y - body.y;
                 baseFwdZ = body.parent.z - body.z;
-                computeBodySpinAxis(body, scratchBodySpinAxis);
+                computeObjectSpinAxis(body, scratchBodySpinAxis);
                 upRefX = scratchBodySpinAxis[0];
                 upRefY = scratchBodySpinAxis[1];
                 upRefZ = scratchBodySpinAxis[2];
@@ -1229,7 +1235,7 @@ public class WorldCamera {
                 }
             }
             case ROTATION_AXIAL -> {
-                buildBodyOrientationMatrix(followFrameBodyMatrix, body);
+                buildObjectOrientationMatrix(followFrameBodyMatrix, body);
                 float[] m = followFrameBodyMatrix.val;
                 baseFwdX = m[Matrix4.M02];
                 baseFwdY = m[Matrix4.M12];

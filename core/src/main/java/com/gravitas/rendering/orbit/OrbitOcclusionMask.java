@@ -296,7 +296,7 @@ public class OrbitOcclusionMask {
             return null;
         }
 
-        camera.buildBodyAxisFrameMatrix(bodyRotationMatrix, body);
+        camera.buildObjectAxisFrameMatrix(bodyRotationMatrix, body);
 
         float[] m = bodyRotationMatrix.val;
         double ux = m[Matrix4.M00];

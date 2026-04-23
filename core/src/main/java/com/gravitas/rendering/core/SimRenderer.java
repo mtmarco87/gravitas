@@ -341,7 +341,7 @@ public class SimRenderer {
             }
 
             double halfLength = selfClipRadius * SPIN_AXIS_HALF_LENGTH_SCALE;
-            camera.getBodySpinAxis(body, scratchSpinAxis);
+            camera.getObjectSpinAxis(body, scratchSpinAxis);
 
             double southX = body.x - scratchSpinAxis[0] * halfLength;
             double southY = body.y - scratchSpinAxis[1] * halfLength;

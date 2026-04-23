@@ -521,9 +521,9 @@ public class CelestialBodyRenderer {
 
     private void setTopViewSurfaceFrame(ShaderProgram shader, CelestialBody cb, boolean includeRotation) {
         if (includeRotation) {
-            camera.buildBodyOrientationMatrix(bodyRotationMatrix, cb);
+            camera.buildObjectOrientationMatrix(bodyRotationMatrix, cb);
         } else {
-            camera.buildBodyAxisFrameMatrix(bodyRotationMatrix, cb);
+            camera.buildObjectAxisFrameMatrix(bodyRotationMatrix, cb);
         }
 
         float[] m = bodyRotationMatrix.val;
@@ -533,7 +533,7 @@ public class CelestialBodyRenderer {
     }
 
     private RingProjection projectTopViewRing(CelestialBody cb, float outerScreenRadius) {
-        camera.buildBodyAxisFrameMatrix(bodyRotationMatrix, cb);
+        camera.buildObjectAxisFrameMatrix(bodyRotationMatrix, cb);
 
         float[] m = bodyRotationMatrix.val;
         float axisXx = m[Matrix4.M00] * outerScreenRadius;
@@ -664,7 +664,7 @@ public class CelestialBodyRenderer {
             return false;
         }
 
-        camera.buildBodyAxisFrameMatrix(bodyRotationMatrix, cb);
+        camera.buildObjectAxisFrameMatrix(bodyRotationMatrix, cb);
         float[] m = bodyRotationMatrix.val;
         out[0] = scratchWorldLightDir[0] * m[Matrix4.M00]
                 + scratchWorldLightDir[1] * m[Matrix4.M10]

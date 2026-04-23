@@ -491,7 +491,7 @@ public class MeasureTool {
         double offsetX = wx - body.x;
         double offsetY = wy - body.y;
         double offsetZ = wz - body.z;
-        camera.buildBodyOrientationMatrix(bodyRotation, body);
+        camera.buildObjectOrientationMatrix(bodyRotation, body);
         float[] m = bodyRotation.val;
 
         anchor.localX = offsetX * m[Matrix4.M00] + offsetY * m[Matrix4.M10] + offsetZ * m[Matrix4.M20];
@@ -500,7 +500,7 @@ public class MeasureTool {
     }
 
     private void resolveBodyLockedAnchor(AnchorPoint anchor, double[] out) {
-        camera.buildBodyOrientationMatrix(bodyRotation, anchor.body);
+        camera.buildObjectOrientationMatrix(bodyRotation, anchor.body);
         float[] m = bodyRotation.val;
 
         out[0] = anchor.body.x

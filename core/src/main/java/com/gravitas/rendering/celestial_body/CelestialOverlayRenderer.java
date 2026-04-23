@@ -442,7 +442,7 @@ final class CelestialOverlayRenderer {
             return false;
         }
 
-        camera.buildBodyOrientationMatrix(lightRotationMatrix, cb);
+        camera.buildObjectOrientationMatrix(lightRotationMatrix, cb);
         float[] m = lightRotationMatrix.val;
         out[0] = scratchWorldLightDir[0] * m[Matrix4.M00]
                 + scratchWorldLightDir[1] * m[Matrix4.M10]
@@ -493,7 +493,7 @@ final class CelestialOverlayRenderer {
     }
 
     private void setCloudSurfaceFrame(ShaderProgram shader, CelestialBody cb, ProjectedEllipse ellipse) {
-        camera.buildBodyOrientationMatrix(bodyRotationMatrix, cb);
+        camera.buildObjectOrientationMatrix(bodyRotationMatrix, cb);
         bodyToCameraMatrix.set(camera.getViewMatrix()).mul(bodyRotationMatrix);
 
         float[] m = bodyToCameraMatrix.val;
@@ -531,7 +531,7 @@ final class CelestialOverlayRenderer {
     }
 
     private void setTopViewSurfaceFrame(ShaderProgram shader, CelestialBody cb) {
-        camera.buildBodyOrientationMatrix(bodyRotationMatrix, cb);
+        camera.buildObjectOrientationMatrix(bodyRotationMatrix, cb);
 
         float[] m = bodyRotationMatrix.val;
         shader.setUniformf("u_worldToBodyRow0", m[Matrix4.M00], m[Matrix4.M10], m[Matrix4.M20]);
