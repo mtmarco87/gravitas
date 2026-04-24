@@ -19,6 +19,7 @@ import com.gravitas.settings.SimulationSettings;
 import com.gravitas.settings.enums.SpinMode;
 import com.gravitas.util.BodySelectionUtils;
 import com.gravitas.util.FormatUtils;
+import com.gravitas.util.GeometryUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +43,9 @@ import java.util.List;
 public class BodyTooltip {
 
     private static final float HOVER_EXTRA_PX = 8f;
+    private static final int BELT_HOVER_SEGMENTS = 128;
+    private static final float BELT_HOVER_EDGE_PAD_PX = 8f;
+    private static final double BELT_Z_SCATTER_FRACTION = 0.08;
     private static final float PAD = 8f;
     private static final float LINE_H = 17f;
     private static final float LOCK_RELATION_GAP = LINE_H * 0.45f;
@@ -62,6 +66,10 @@ public class BodyTooltip {
     private final GlyphLayout layout = new GlyphLayout();
     private final Universe universe;
     private final SimulationSettings simulationSettings;
+    private final float[] beltOuterXs = new float[BELT_HOVER_SEGMENTS];
+    private final float[] beltOuterYs = new float[BELT_HOVER_SEGMENTS];
+    private final float[] beltInnerXs = new float[BELT_HOVER_SEGMENTS];
+    private final float[] beltInnerYs = new float[BELT_HOVER_SEGMENTS];
 
     public BodyTooltip(FontManager fontManager, WorldCamera camera, PhysicsEngine physics,
             ShapeRenderer shapeRenderer, Universe universe, SimulationSettings simulationSettings) {
@@ -743,6 +751,10 @@ public class BodyTooltip {
     }
 
     private Belt findHoveredBelt(int mouseX, int mouseYFlipped) {
+        if (camera.getMode() == CameraMode.FREE_CAM) {
+            return findHoveredBelt3D(mouseX, mouseYFlipped);
+        }
+
         double[] worldPos = camera.screenToWorld(mouseX, mouseYFlipped);
         double mx = worldPos[0];
         double my = worldPos[1];
@@ -762,6 +774,116 @@ public class BodyTooltip {
             }
         }
         return null;
+    }
+
+    private Belt findHoveredBelt3D(int mouseX, int mouseYFlipped) {
+        Belt best = null;
+        float bestScore = Float.MAX_VALUE;
+
+        for (Belt belt : universe.getBelts()) {
+            float score = projectedBeltHitScore(belt, mouseX, mouseYFlipped);
+            if (score < bestScore) {
+                bestScore = score;
+                best = belt;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Returns a finite score when the mouse is inside the belt's projected annulus
+     * or close enough to its edges, otherwise {@link Float#POSITIVE_INFINITY}.
+     */
+    private float projectedBeltHitScore(Belt belt, int mouseX, int mouseYFlipped) {
+        if (!buildProjectedBeltPolygons(belt)) {
+            return Float.POSITIVE_INFINITY;
+        }
+
+        boolean insideOuter = pointInPolygon(mouseX, mouseYFlipped, beltOuterXs, beltOuterYs, BELT_HOVER_SEGMENTS);
+        boolean insideInner = pointInPolygon(mouseX, mouseYFlipped, beltInnerXs, beltInnerYs, BELT_HOVER_SEGMENTS);
+        float outerEdgeDistSq = polygonEdgeDistanceSq(mouseX, mouseYFlipped, beltOuterXs, beltOuterYs,
+                BELT_HOVER_SEGMENTS);
+        float innerEdgeDistSq = polygonEdgeDistanceSq(mouseX, mouseYFlipped, beltInnerXs, beltInnerYs,
+                BELT_HOVER_SEGMENTS);
+        float edgeDistSq = Math.min(outerEdgeDistSq, innerEdgeDistSq);
+        float edgePadPx = projectedBeltEdgePadPx(belt);
+
+        if (insideOuter && !insideInner) {
+            return edgeDistSq;
+        }
+        if (edgeDistSq <= edgePadPx * edgePadPx) {
+            return edgeDistSq;
+        }
+        return Float.POSITIVE_INFINITY;
+    }
+
+    private boolean buildProjectedBeltPolygons(Belt belt) {
+        double parentX = belt.parent != null ? belt.parent.x : 0.0;
+        double parentY = belt.parent != null ? belt.parent.y : 0.0;
+        double parentZ = belt.parent != null ? belt.parent.z : 0.0;
+
+        for (int i = 0; i < BELT_HOVER_SEGMENTS; i++) {
+            double angle = (Math.PI * 2.0 * i) / BELT_HOVER_SEGMENTS;
+            double cos = Math.cos(angle);
+            double sin = Math.sin(angle);
+
+            double outerX = parentX + belt.outerRadius * cos;
+            double outerY = parentY + belt.outerRadius * sin;
+            double innerX = parentX + belt.innerRadius * cos;
+            double innerY = parentY + belt.innerRadius * sin;
+
+            if (camera.depthOf(outerX, outerY, parentZ) <= 0.0
+                    || camera.depthOf(innerX, innerY, parentZ) <= 0.0) {
+                return false;
+            }
+
+            var outerScreen = camera.worldToScreen(outerX, outerY, parentZ);
+            beltOuterXs[i] = outerScreen.x;
+            beltOuterYs[i] = outerScreen.y;
+
+            var innerScreen = camera.worldToScreen(innerX, innerY, parentZ);
+            beltInnerXs[i] = innerScreen.x;
+            beltInnerYs[i] = innerScreen.y;
+        }
+        return true;
+    }
+
+    private float projectedBeltEdgePadPx(Belt belt) {
+        double parentX = belt.parent != null ? belt.parent.x : 0.0;
+        double parentY = belt.parent != null ? belt.parent.y : 0.0;
+        double parentZ = belt.parent != null ? belt.parent.z : 0.0;
+        double midRadius = (belt.innerRadius + belt.outerRadius) * 0.5;
+        double thickness = midRadius * BELT_Z_SCATTER_FRACTION;
+        double sampleX = parentX + midRadius;
+        if (camera.depthOf(sampleX, parentY, parentZ + thickness) <= 0.0
+                || camera.depthOf(sampleX, parentY, parentZ - thickness) <= 0.0) {
+            return BELT_HOVER_EDGE_PAD_PX;
+        }
+
+        var top = camera.worldToScreen(sampleX, parentY, parentZ + thickness);
+        var bottom = camera.worldToScreen(sampleX, parentY, parentZ - thickness);
+        float projectedThicknessPx = (float) Math.hypot(top.x - bottom.x, top.y - bottom.y) * 0.5f;
+        return Math.max(BELT_HOVER_EDGE_PAD_PX, projectedThicknessPx + 1.5f);
+    }
+
+    private boolean pointInPolygon(float px, float py, float[] xs, float[] ys, int count) {
+        boolean inside = false;
+        for (int i = 0, j = count - 1; i < count; j = i++) {
+            boolean intersects = ((ys[i] > py) != (ys[j] > py))
+                    && (px < (xs[j] - xs[i]) * (py - ys[i]) / ((ys[j] - ys[i]) + 1e-6f) + xs[i]);
+            if (intersects) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
+    private float polygonEdgeDistanceSq(float px, float py, float[] xs, float[] ys, int count) {
+        float best = Float.MAX_VALUE;
+        for (int i = 0, j = count - 1; i < count; j = i++) {
+            best = Math.min(best, GeometryUtils.pointToSegmentDistSq(px, py, xs[j], ys[j], xs[i], ys[i]));
+        }
+        return best;
     }
 
     private String[] buildBeltLines(Belt belt) {

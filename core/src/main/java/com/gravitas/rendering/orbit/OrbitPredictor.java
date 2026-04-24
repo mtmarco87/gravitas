@@ -958,20 +958,6 @@ public class OrbitPredictor implements Disposable {
 
     private static float pointToSegmentDistance(float px, float py,
             float ax, float ay, float bx, float by) {
-        float abx = bx - ax;
-        float aby = by - ay;
-        float lenSq = (float) GeometryUtils.lengthSq(abx, aby);
-        if (lenSq <= 1e-6f) {
-            float dx = px - ax;
-            float dy = py - ay;
-            return (float) Math.sqrt(GeometryUtils.lengthSq(dx, dy));
-        }
-        float t = ((px - ax) * abx + (py - ay) * aby) / lenSq;
-        t = Math.max(0f, Math.min(1f, t));
-        float cx = ax + t * abx;
-        float cy = ay + t * aby;
-        float dx = px - cx;
-        float dy = py - cy;
-        return (float) Math.sqrt(GeometryUtils.lengthSq(dx, dy));
+        return (float) Math.sqrt(GeometryUtils.pointToSegmentDistSq(px, py, ax, ay, bx, by));
     }
 }

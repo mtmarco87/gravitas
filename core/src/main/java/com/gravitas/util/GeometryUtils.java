@@ -36,6 +36,23 @@ public final class GeometryUtils {
         return lengthSq(bx - ax, by - ay, bz - az);
     }
 
+    /** Returns the squared distance from a 2D point to a 2D line segment. */
+    public static float pointToSegmentDistSq(float px, float py,
+            float ax, float ay, float bx, float by) {
+        float abx = bx - ax;
+        float aby = by - ay;
+        float lenSq = (float) lengthSq(abx, aby);
+        if (lenSq <= 1e-6f) {
+            return (float) distanceSq(px, py, ax, ay);
+        }
+
+        float t = ((px - ax) * abx + (py - ay) * aby) / lenSq;
+        t = (float) clamp(t, 0.0, 1.0);
+        float cx = ax + t * abx;
+        float cy = ay + t * aby;
+        return (float) distanceSq(px, py, cx, cy);
+    }
+
     /** Normalizes a 3D vector. Returns false for near-zero vectors. */
     public static boolean normalize(double x, double y, double z, double[] out) {
         double lenSq = lengthSq(x, y, z);

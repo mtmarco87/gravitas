@@ -19,6 +19,7 @@ import com.gravitas.state.AppState;
 import com.gravitas.state.SimulationState;
 import com.gravitas.state.UiState;
 import com.gravitas.util.BodySelectionUtils;
+import com.gravitas.util.GeometryUtils;
 import com.gravitas.ui.settings.SettingsPanelController;
 import com.gravitas.ui.settings.SettingsPanelModel;
 import com.gravitas.ui.settings.WarpPresets;
@@ -385,7 +386,7 @@ public class GravitasInputProcessor extends InputAdapter {
             for (int i = 0; i < pts.length / 3 - 1; i++) {
                 Vector2 p0 = camera.worldToScreen(pts[i * 3], pts[i * 3 + 1], pts[i * 3 + 2]);
                 Vector2 p1 = camera.worldToScreen(pts[(i + 1) * 3], pts[(i + 1) * 3 + 1], pts[(i + 1) * 3 + 2]);
-                float distSq = pointToSegmentDistSq(screenX, sySrc,
+                float distSq = GeometryUtils.pointToSegmentDistSq(screenX, sySrc,
                         p0.x, p0.y, p1.x, p1.y);
                 if (distSq < bestDistSq) {
                     bestDistSq = distSq;
@@ -417,7 +418,7 @@ public class GravitasInputProcessor extends InputAdapter {
             float[] coords = new float[trail.pointCount() * 2];
             int n = trail.toScreenCoords(camera, coords);
             for (int i = 0; i < n - 1; i++) {
-                float distSq = pointToSegmentDistSq(screenX, sySrc,
+                float distSq = GeometryUtils.pointToSegmentDistSq(screenX, sySrc,
                         coords[i * 2], coords[i * 2 + 1],
                         coords[(i + 1) * 2], coords[(i + 1) * 2 + 1]);
                 if (distSq < bestDistSq) {
@@ -427,21 +428,6 @@ public class GravitasInputProcessor extends InputAdapter {
             }
         }
         return bestBody;
-    }
-
-    /** Squared distance from point (px,py) to segment (ax,ay)-(bx,by). */
-    private static float pointToSegmentDistSq(float px, float py,
-            float ax, float ay, float bx, float by) {
-        float abx = bx - ax, aby = by - ay;
-        float lenSq = abx * abx + aby * aby;
-        if (lenSq == 0) {
-            float dx = px - ax, dy = py - ay;
-            return dx * dx + dy * dy;
-        }
-        float t = Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / lenSq));
-        float cx = ax + t * abx - px;
-        float cy = ay + t * aby - py;
-        return cx * cx + cy * cy;
     }
 
     private void setWarp(double warp) {
