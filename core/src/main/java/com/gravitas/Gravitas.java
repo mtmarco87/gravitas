@@ -87,7 +87,7 @@ public class Gravitas extends ApplicationAdapter {
         // --- Physics ---
         physics = new PhysicsEngine(universe);
         physics.setCollisionListener((a, b) -> Gdx.app.log("Collision", a.name + " <-> " + b.name));
-        physics.setTimeWarpFactor(500_000);
+        physics.setTimeWarpFactor(100_000);
 
         // --- Starfield background ---
         starfield = new StarfieldRenderer();

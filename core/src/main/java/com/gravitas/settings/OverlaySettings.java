@@ -1,6 +1,7 @@
 package com.gravitas.settings;
 
 import com.gravitas.settings.enums.OrbitOverlayMode;
+import com.gravitas.settings.enums.OrbitPredictorScope;
 import com.gravitas.settings.enums.OrbitRenderMode;
 import com.gravitas.settings.enums.OrientationOverlayMode;
 
@@ -9,11 +10,13 @@ public final class OverlaySettings {
     private static final boolean DEFAULT_VISUAL_SCALE_MODE = true;
     private static final OrbitOverlayMode DEFAULT_ORBIT_OVERLAY_MODE = OrbitOverlayMode.TRAILS_ONLY;
     private static final OrbitRenderMode DEFAULT_ORBIT_RENDER_MODE = OrbitRenderMode.CPU_DASHED_SIMPLE;
+    private static final OrbitPredictorScope DEFAULT_ORBIT_PREDICTOR_SCOPE = OrbitPredictorScope.LOCAL;
     private static final OrientationOverlayMode DEFAULT_ORIENTATION_OVERLAY_MODE = OrientationOverlayMode.NONE;
 
     private boolean visualScaleMode;
     private OrbitOverlayMode orbitOverlayMode;
     private OrbitRenderMode orbitRenderMode;
+    private OrbitPredictorScope orbitPredictorScope;
     private OrientationOverlayMode orientationOverlayMode;
 
     public OverlaySettings() {
@@ -24,6 +27,7 @@ public final class OverlaySettings {
         visualScaleMode = DEFAULT_VISUAL_SCALE_MODE;
         orbitOverlayMode = DEFAULT_ORBIT_OVERLAY_MODE;
         orbitRenderMode = OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
+        orbitPredictorScope = DEFAULT_ORBIT_PREDICTOR_SCOPE;
         orientationOverlayMode = DEFAULT_ORIENTATION_OVERLAY_MODE;
     }
 
@@ -77,6 +81,21 @@ public final class OverlaySettings {
         if (next != null) {
             orbitRenderMode = next;
         }
+    }
+
+    public OrbitPredictorScope getOrbitPredictorScope() {
+        return orbitPredictorScope;
+    }
+
+    public void setOrbitPredictorScope(OrbitPredictorScope orbitPredictorScope) {
+        this.orbitPredictorScope = orbitPredictorScope != null
+                ? orbitPredictorScope
+                : DEFAULT_ORBIT_PREDICTOR_SCOPE;
+    }
+
+    public void cycleOrbitPredictorScope() {
+        orbitPredictorScope = (orbitPredictorScope != null ? orbitPredictorScope : DEFAULT_ORBIT_PREDICTOR_SCOPE)
+                .next();
     }
 
     public OrientationOverlayMode getOrientationOverlayMode() {

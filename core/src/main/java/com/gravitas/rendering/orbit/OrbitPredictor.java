@@ -9,6 +9,7 @@ import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
 import com.gravitas.settings.AppSettings;
 import com.gravitas.settings.OverlaySettings;
+import com.gravitas.settings.enums.OrbitPredictorScope;
 import com.gravitas.settings.enums.OrbitRenderMode;
 import com.gravitas.util.GeometryUtils;
 
@@ -58,6 +59,8 @@ public class OrbitPredictor implements Disposable {
     private static final float FREE_CAM_MAX_SEGMENT_PX = 72f;
     private static final float FREE_CAM_CURVE_TOLERANCE_PX = 1.5f;
     private static final float FREE_CAM_CULL_MARGIN = 120f;
+    private static final float ADAPTIVE_LOCAL_ENTER_RADIUS_PX = 4f;
+    private static final float ADAPTIVE_LOCAL_EXIT_RADIUS_PX = 3f;
 
     /**
      * EMA smoothing factor for orbital elements (0 = fully smoothed, 1 = raw).
@@ -81,6 +84,8 @@ public class OrbitPredictor implements Disposable {
 
     /** Set during render() to route line() calls to the correct renderer. */
     private boolean useGpuDash = false;
+    private boolean adaptiveLocalScopeActive = false;
+    private String adaptiveLocalScopeContextId;
 
     public OrbitPredictor(ShapeRenderer shapeRenderer, WorldCamera camera, AppSettings settings) {
         this.shapeRenderer = shapeRenderer;
@@ -129,12 +134,17 @@ public class OrbitPredictor implements Disposable {
             shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         }
 
+        CelestialBody scopeContext = resolveOrbitScopeContext();
+        boolean useLocalScope = shouldUseLocalScope(objects, scopeContext);
+
         for (SimObject obj : objects) {
             if (!obj.active)
                 continue;
             if (!(obj instanceof CelestialBody cb))
                 continue;
             if (cb.parent == null)
+                continue;
+            if (useLocalScope && !isInLocalOrbitContext(cb, scopeContext))
                 continue;
 
             drawOrbitEllipse(cb, cb.parent, occlusionMask);
@@ -145,6 +155,82 @@ public class OrbitPredictor implements Disposable {
         } else {
             shapeRenderer.end();
         }
+    }
+
+    private boolean shouldUseLocalScope(List<SimObject> objects, CelestialBody context) {
+        OrbitPredictorScope scope = overlaySettings.getOrbitPredictorScope();
+        if (scope == null || scope == OrbitPredictorScope.ALL) {
+            adaptiveLocalScopeActive = false;
+            adaptiveLocalScopeContextId = null;
+            return false;
+        }
+        if (context == null) {
+            adaptiveLocalScopeActive = false;
+            adaptiveLocalScopeContextId = null;
+            return false;
+        }
+        if (scope == OrbitPredictorScope.LOCAL) {
+            adaptiveLocalScopeActive = true;
+            adaptiveLocalScopeContextId = context.id;
+            return true;
+        }
+        return shouldUseAdaptiveLocalScope(objects, context);
+    }
+
+    private CelestialBody resolveOrbitScopeContext() {
+        SimObject followTarget = camera.getOrbitScopeTarget();
+        if (!(followTarget instanceof CelestialBody body) || !body.active) {
+            return null;
+        }
+        return body;
+    }
+
+    private boolean shouldUseAdaptiveLocalScope(List<SimObject> objects, CelestialBody context) {
+        double localOrbitScale = computeAdaptiveLocalOrbitScale(objects, context);
+        if (localOrbitScale <= 0.0) {
+            adaptiveLocalScopeActive = false;
+            adaptiveLocalScopeContextId = context.id;
+            return false;
+        }
+        float projectedLocalRadius = camera.worldSphereRadiusToScreen(localOrbitScale, context.x, context.y, context.z);
+
+        boolean sameContext = context.id != null && context.id.equals(adaptiveLocalScopeContextId);
+        boolean useLocal = sameContext && adaptiveLocalScopeActive
+                ? projectedLocalRadius >= ADAPTIVE_LOCAL_EXIT_RADIUS_PX
+                : projectedLocalRadius >= ADAPTIVE_LOCAL_ENTER_RADIUS_PX;
+
+        adaptiveLocalScopeActive = useLocal;
+        adaptiveLocalScopeContextId = context.id;
+        return useLocal;
+    }
+
+    private boolean isInLocalOrbitContext(CelestialBody candidate, CelestialBody context) {
+        if (candidate == context) {
+            return true;
+        }
+        if (candidate == context.parent) {
+            return true;
+        }
+        return candidate.parent == context;
+    }
+
+    private double computeAdaptiveLocalOrbitScale(List<SimObject> objects, CelestialBody context) {
+        double localScale = Double.POSITIVE_INFINITY;
+        if (context.parent != null && context.semiMajorAxis > 0.0) {
+            localScale = context.semiMajorAxis;
+        }
+        for (SimObject object : objects) {
+            if (!(object instanceof CelestialBody body) || !body.active || body.parent != context) {
+                continue;
+            }
+            if (body.semiMajorAxis > 0.0) {
+                localScale = Math.min(localScale, body.semiMajorAxis);
+            }
+        }
+        if (!Double.isFinite(localScale) || localScale <= 0.0) {
+            return 0.0;
+        }
+        return localScale;
     }
 
     // -------------------------------------------------------------------------

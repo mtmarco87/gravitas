@@ -24,7 +24,7 @@ public final class SettingsPanelModel {
     private static final int SETTINGS_FX_OPTION_COUNT = 5;
     private static final int SETTINGS_PHYSICS_BASE_OPTION_COUNT = 2;
     private static final int SETTINGS_PHYSICS_FULL_OPTION_COUNT = 3;
-    private static final int SETTINGS_OVERLAY_OPTION_COUNT = 5;
+    private static final int SETTINGS_OVERLAY_OPTION_COUNT = 6;
     private static final int SETTINGS_CLOUD_OPTION_COUNT = 8;
     private static final int SETTINGS_LIGHTING_OPTION_COUNT = 3;
     private static final int SETTINGS_ATMOSPHERE_OPTION_COUNT = 6;
@@ -164,8 +164,9 @@ public final class SettingsPanelModel {
             case 0 -> "1. Orbit Vectors [" + overlaySettings.getOrientationOverlayMode().hudLabel() + "]";
             case 1 -> "2. Orbit Overlays [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
             case 2 -> "3. Orbit Style [" + overlaySettings.getOrbitRenderMode().hudLabel() + "]";
-            case 3 -> "4. Visual Scale [" + (overlaySettings.isVisualScaleMode() ? "ON" : "OFF") + "]";
-            case 4 -> "5. < Back";
+            case 3 -> "4. Orbit Scope [" + overlaySettings.getOrbitPredictorScope().hudLabel() + "]";
+            case 4 -> "5. Visual Scale [" + (overlaySettings.isVisualScaleMode() ? "ON" : "OFF") + "]";
+            case 5 -> "6. < Back";
             default -> "?";
         };
     }

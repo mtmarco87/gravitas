@@ -42,6 +42,8 @@ public class WorldCamera {
     private static final float FREE_CAM_FOV_ADAPT_NEAR_RADIUS_PX = 180f;
     private static final float FREE_CAM_FOV_LERP_SPEED = 1f;
     private static final float CAMERA_MODE_TRANSITION_DURATION = 0.18f;
+    private static final float FOLLOW_TARGET_TRANSITION_DURATION = 0.22f;
+    private static final float FOLLOW_TARGET_ZOOM_RELEASE_PROGRESS = 0.5f;
     private static final float TOP_VIEW_EQUIVALENT_ELEVATION = (float) Math.toRadians(89f);
     private static final float DEFAULT_METERS_PER_PIXEL = 1.56e9f;
     private static final float DEFAULT_FREE_CAM_AZIMUTH = 0f;
@@ -103,6 +105,18 @@ public class WorldCamera {
     private float followFramePitchOffset = 0f;
     private float savedFollowFrameYawOffset = 0f;
     private float savedFollowFramePitchOffset = 0f;
+    private boolean followTargetTransitionActive = false;
+    private float followTargetTransitionElapsed = 0f;
+    private SimObject transitionFollowTarget;
+    private double transitionStartFocusX;
+    private double transitionStartFocusY;
+    private double transitionStartFocusZ;
+    private float transitionStartAzimuth = 0f;
+    private float transitionStartElevation = 0f;
+    private float transitionEndAzimuth = 0f;
+    private float transitionEndElevation = 0f;
+    private boolean pendingSmoothZoom = false;
+    private double pendingSmoothZoomRadius = 0.0;
 
     /** Precomputed camera position (world space, double precision). */
     private double camPosX, camPosY, camPosZ;
@@ -151,11 +165,15 @@ public class WorldCamera {
     // -------------------------------------------------------------------------
 
     public void update(float dt) {
-        SimObject followTarget = getFollowTarget();
-        if (followTarget != null) {
-            focusX = followTarget.x;
-            focusY = followTarget.y;
-            focusZ = followTarget.z;
+        if (followTargetTransitionActive) {
+            updateFollowTargetTransition(dt);
+        } else {
+            SimObject followTarget = getFollowTarget();
+            if (followTarget != null) {
+                focusX = followTarget.x;
+                focusY = followTarget.y;
+                focusZ = followTarget.z;
+            }
         }
 
         if (getMode() == CameraMode.FREE_CAM) {
@@ -517,10 +535,53 @@ public class WorldCamera {
     // -------------------------------------------------------------------------
 
     public void setFollowTarget(SimObject target) {
+        applyFollowTarget(target, true, true);
+    }
+
+    public void startSmoothFollowTarget(SimObject target) {
+        followTargetTransitionActive = false;
+        followTargetTransitionElapsed = 0f;
+        transitionFollowTarget = null;
+        pendingSmoothZoom = false;
+        pendingSmoothZoomRadius = 0.0;
+
+        if (target == null) {
+            clearFollow();
+            return;
+        }
+
+        adaptiveFovTarget = target;
+        transitionFollowTarget = target;
+        transitionStartFocusX = focusX;
+        transitionStartFocusY = focusY;
+        transitionStartFocusZ = focusZ;
+        transitionStartAzimuth = azimuth;
+        transitionStartElevation = elevation;
+        transitionEndAzimuth = azimuth;
+        transitionEndElevation = elevation;
+
+        if (getMode() == CameraMode.FREE_CAM
+                && resolveFollowFrameAxesForTarget(target, scratchFrameForward, scratchFrameRight, scratchFrameUp)) {
+            transitionEndAzimuth = azimuthFromForward(scratchFrameForward[0], scratchFrameForward[1]);
+            transitionEndElevation = elevationFromForward(scratchFrameForward[2]);
+        }
+
+        cameraState.clearFollowTarget();
+        followTargetTransitionActive = true;
+    }
+
+    private void applyFollowTarget(SimObject target, boolean resetOffsets, boolean snapFocus) {
+        followTargetTransitionActive = false;
+        followTargetTransitionElapsed = 0f;
+        transitionFollowTarget = null;
+        pendingSmoothZoom = false;
+        pendingSmoothZoomRadius = 0.0;
         cameraState.setFollowTarget(target);
         this.adaptiveFovTarget = target;
-        resetFollowFrameOffsets();
-        if (target != null) {
+        if (resetOffsets) {
+            resetFollowFrameOffsets();
+        }
+        if (target != null && snapFocus) {
             focusX = target.x;
             focusY = target.y;
             focusZ = target.z;
@@ -560,6 +621,16 @@ public class WorldCamera {
      * on screen. Never zooms out from the current scale.
      */
     public void startSmoothZoomTo(double bodyRadius) {
+        if (followTargetTransitionActive) {
+            pendingSmoothZoom = true;
+            pendingSmoothZoomRadius = bodyRadius;
+            return;
+        }
+
+        startSmoothZoomToNow(bodyRadius);
+    }
+
+    private void startSmoothZoomToNow(double bodyRadius) {
         if (getMode() == CameraMode.FREE_CAM) {
             startSmoothZoomToFreeCam(bodyRadius);
         } else {
@@ -590,6 +661,13 @@ public class WorldCamera {
         return cameraState.getFollowTarget();
     }
 
+    public SimObject getOrbitScopeTarget() {
+        if (followTargetTransitionActive && transitionFollowTarget != null && transitionFollowTarget.active) {
+            return transitionFollowTarget;
+        }
+        return getFollowTarget();
+    }
+
     public FollowFrameMode getFollowFrameMode() {
         return cameraSettings.getFollowFrameMode();
     }
@@ -610,6 +688,11 @@ public class WorldCamera {
     }
 
     public void clearFollow() {
+        followTargetTransitionActive = false;
+        followTargetTransitionElapsed = 0f;
+        transitionFollowTarget = null;
+        pendingSmoothZoom = false;
+        pendingSmoothZoomRadius = 0.0;
         cameraState.clearFollowTarget();
         adaptiveFovTarget = null;
     }
@@ -681,8 +764,15 @@ public class WorldCamera {
             focusZ = followTarget.z;
         }
         syncConfiguredFreeCamFov();
-        updateFreeCamAxes();
-        beginCameraModeTransition(savedFreeCamAzimuth, savedFreeCamElevation, CameraMode.FREE_CAM);
+
+        float targetAzimuth = savedFreeCamAzimuth;
+        float targetElevation = savedFreeCamElevation;
+        if (resolveFollowFrameAxes(scratchFrameForward, scratchFrameRight, scratchFrameUp)) {
+            targetAzimuth = azimuthFromForward(scratchFrameForward[0], scratchFrameForward[1]);
+            targetElevation = elevationFromForward(scratchFrameForward[2]);
+        }
+
+        beginCameraModeTransition(targetAzimuth, targetElevation, CameraMode.FREE_CAM);
     }
 
     public void switchToTopViewSmooth() {
@@ -1054,6 +1144,50 @@ public class WorldCamera {
         cameraModeTransitionEndElevation = targetElevation;
     }
 
+    private void updateFollowTargetTransition(float dt) {
+        if (transitionFollowTarget == null || !transitionFollowTarget.active) {
+            clearFollow();
+            return;
+        }
+
+        followTargetTransitionElapsed += dt;
+        float alpha = Math.min(1f, followTargetTransitionElapsed / FOLLOW_TARGET_TRANSITION_DURATION);
+        float easedAlpha = alpha * alpha * (3f - 2f * alpha);
+
+        focusX = lerp(transitionStartFocusX, transitionFollowTarget.x, easedAlpha);
+        focusY = lerp(transitionStartFocusY, transitionFollowTarget.y, easedAlpha);
+        focusZ = lerp(transitionStartFocusZ, transitionFollowTarget.z, easedAlpha);
+
+        if (getMode() == CameraMode.FREE_CAM) {
+            azimuth = MathUtils.lerpAngle(transitionStartAzimuth, transitionEndAzimuth, easedAlpha);
+            elevation = MathUtils.lerp(transitionStartElevation, transitionEndElevation, easedAlpha);
+            clampElevation();
+        }
+
+        if (pendingSmoothZoom && easedAlpha >= FOLLOW_TARGET_ZOOM_RELEASE_PROGRESS) {
+            double zoomRadius = pendingSmoothZoomRadius;
+            pendingSmoothZoom = false;
+            pendingSmoothZoomRadius = 0.0;
+            startSmoothZoomToNow(zoomRadius);
+        }
+
+        if (alpha >= 1f) {
+            focusX = transitionFollowTarget.x;
+            focusY = transitionFollowTarget.y;
+            focusZ = transitionFollowTarget.z;
+            azimuth = transitionEndAzimuth;
+            elevation = transitionEndElevation;
+            clampElevation();
+            if (pendingSmoothZoom) {
+                double zoomRadius = pendingSmoothZoomRadius;
+                pendingSmoothZoom = false;
+                pendingSmoothZoomRadius = 0.0;
+                startSmoothZoomToNow(zoomRadius);
+            }
+            applyFollowTarget(transitionFollowTarget, false, false);
+        }
+    }
+
     private void updateCameraModeTransition(float dt) {
         cameraModeTransitionElapsed += dt;
         float alpha = Math.min(1f, cameraModeTransitionElapsed / CAMERA_MODE_TRANSITION_DURATION);
@@ -1183,12 +1317,35 @@ public class WorldCamera {
         };
     }
 
+    private boolean shouldUseFollowFrameForTarget(SimObject target) {
+        FollowFrameMode followFrameMode = getFollowFrameMode();
+        if (followFrameMode == FollowFrameMode.FREE_ORBIT) {
+            return false;
+        }
+        if (!(target instanceof CelestialBody body) || !body.active) {
+            return false;
+        }
+        return switch (followFrameMode) {
+            case FREE_ORBIT -> false;
+            case ORBIT_UPRIGHT, ORBIT_PLANE, ORBIT_AXIAL -> body.parent != null && body.parent.active;
+            case ROTATION_AXIAL -> true;
+        };
+    }
+
     private boolean resolveFollowFrameAxes(double[] outFwd, double[] outRight, double[] outUp) {
         if (!shouldUseFollowFrame()) {
             return false;
         }
 
-        SimObject followTarget = getFollowTarget();
+        return resolveFollowFrameAxesForTarget(getFollowTarget(), outFwd, outRight, outUp);
+    }
+
+    private boolean resolveFollowFrameAxesForTarget(SimObject followTarget, double[] outFwd, double[] outRight,
+            double[] outUp) {
+        if (!shouldUseFollowFrameForTarget(followTarget)) {
+            return false;
+        }
+
         FollowFrameMode followFrameMode = getFollowFrameMode();
         CelestialBody body = (CelestialBody) followTarget;
         double baseFwdX;
@@ -1395,9 +1552,21 @@ public class WorldCamera {
     }
 
     private void syncOrbitAnglesFromForward() {
-        azimuth = (float) Math.atan2(-camFwdX, camFwdY);
-        elevation = (float) Math.asin(Math.max(-1.0, Math.min(1.0, -camFwdZ)));
+        azimuth = azimuthFromForward(camFwdX, camFwdY);
+        elevation = elevationFromForward(camFwdZ);
         clampElevation();
+    }
+
+    private float azimuthFromForward(double forwardX, double forwardY) {
+        return (float) Math.atan2(-forwardX, forwardY);
+    }
+
+    private float elevationFromForward(double forwardZ) {
+        return (float) Math.asin(Math.max(-1.0, Math.min(1.0, -forwardZ)));
+    }
+
+    private double lerp(double start, double end, float alpha) {
+        return start + (end - start) * alpha;
     }
 
     private void rotateAroundAxis(double vx, double vy, double vz,

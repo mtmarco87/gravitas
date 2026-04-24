@@ -443,8 +443,9 @@ public final class SettingsPanelController {
             case 0 -> overlaySettings.cycleOrientationOverlayMode();
             case 1 -> overlaySettings.cycleOrbitOverlayMode();
             case 2 -> overlaySettings.cycleOrbitRenderMode();
-            case 3 -> overlaySettings.toggleVisualScaleMode();
-            case 4 -> backOutOfSettingsMenu();
+            case 3 -> overlaySettings.cycleOrbitPredictorScope();
+            case 4 -> overlaySettings.toggleVisualScaleMode();
+            case 5 -> backOutOfSettingsMenu();
             default -> {
             }
         }

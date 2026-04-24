@@ -61,6 +61,7 @@ public class GravitasInputProcessor extends InputAdapter {
 
     private static final float CAMERA_ARROW_PAN_PX_PER_SEC = 400f;
     private static final float CAMERA_KEY_ROT_SPEED = 1.5f;
+    private static final int TAP_DRAG_THRESHOLD_PX = 12;
 
     private final WorldCamera camera;
     private final PhysicsEngine physics;
@@ -76,8 +77,9 @@ public class GravitasInputProcessor extends InputAdapter {
     private final SettingsPanelController settingsPanelController;
 
     private double prePauseWarp = 1.0;
-    // Left-mouse pan state.
+    // Left-mouse pointer / pan state.
     private boolean leftDragging = false;
+    private boolean leftPanning = false;
 
     // Right-mouse orbit-drag state (FREE_CAM).
     private boolean rightDragging = false;
@@ -491,10 +493,12 @@ public class GravitasInputProcessor extends InputAdapter {
             if (measureTool.isActive()) {
                 clearPendingTapState();
                 leftDragging = false;
+                leftPanning = false;
                 return true;
             }
             camera.onPanBegin(screenX, screenY);
             leftDragging = true;
+            leftPanning = false;
             return true;
         }
         if (button == Input.Buttons.RIGHT
@@ -522,6 +526,14 @@ public class GravitasInputProcessor extends InputAdapter {
             return true;
         }
         if (leftDragging) {
+            if (!leftPanning) {
+                int dx = screenX - touchDownScreenX;
+                int dy = screenY - touchDownScreenY;
+                if (dx * dx + dy * dy <= TAP_DRAG_THRESHOLD_PX * TAP_DRAG_THRESHOLD_PX) {
+                    return true;
+                }
+                leftPanning = true;
+            }
             camera.onPanDrag(screenX, screenY);
             return true;
         }
@@ -539,14 +551,19 @@ public class GravitasInputProcessor extends InputAdapter {
         }
         if (button == Input.Buttons.LEFT) {
             camera.onPanEnd();
+            boolean wasPanning = leftPanning;
             leftDragging = false;
+            leftPanning = false;
+            if (wasPanning) {
+                return true;
+            }
 
             // Measure tool intercepts clicks when active.
             if (measureTool.isActive()) {
                 clearPendingTapState();
                 int dx = screenX - touchDownScreenX;
                 int dy = screenY - touchDownScreenY;
-                if (dx * dx + dy * dy <= 12 * 12) {
+                if (dx * dx + dy * dy <= TAP_DRAG_THRESHOLD_PX * TAP_DRAG_THRESHOLD_PX) {
                     boolean worldLocked = Gdx.input.isKeyPressed(Input.Keys.CONTROL_LEFT)
                             || Gdx.input.isKeyPressed(Input.Keys.CONTROL_RIGHT);
                     boolean bodySnap = Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT)
@@ -559,7 +576,7 @@ public class GravitasInputProcessor extends InputAdapter {
             // Tap detection (no significant drag).
             int dx = screenX - touchDownScreenX;
             int dy = screenY - touchDownScreenY;
-            if (dx * dx + dy * dy <= 12 * 12) {
+            if (dx * dx + dy * dy <= TAP_DRAG_THRESHOLD_PX * TAP_DRAG_THRESHOLD_PX) {
                 long now = System.currentTimeMillis();
                 int ddx = screenX - lastTapScreenX;
                 int ddy = screenY - lastTapScreenY;
@@ -574,7 +591,7 @@ public class GravitasInputProcessor extends InputAdapter {
                     if (target == null)
                         target = findBodyOnTrail(screenX, screenY);
                     if (target != null) {
-                        camera.setFollowTarget(target);
+                        camera.startSmoothFollowTarget(target);
                         camera.startSmoothZoomTo(target.radius);
                     }
                     lastTapTimeMs = -1;
@@ -623,7 +640,7 @@ public class GravitasInputProcessor extends InputAdapter {
         if (pendingSingleTapMs >= 0) {
             if (System.currentTimeMillis() - pendingSingleTapMs >= 300) {
                 if (pendingSingleTapBody != null) {
-                    camera.setFollowTarget(pendingSingleTapBody);
+                    camera.startSmoothFollowTarget(pendingSingleTapBody);
                 } else {
                     camera.setFollowTarget(null); // tap on empty space → unfollow
                 }
@@ -669,6 +686,7 @@ public class GravitasInputProcessor extends InputAdapter {
 
     private void resetPointerDragging() {
         leftDragging = false;
+        leftPanning = false;
         rightDragging = false;
     }
 }
