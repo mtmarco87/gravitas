@@ -3,7 +3,7 @@ package com.gravitas.settings;
 import com.gravitas.settings.enums.OrbitOverlayMode;
 import com.gravitas.settings.enums.OrbitPredictorScope;
 import com.gravitas.settings.enums.OrbitRenderMode;
-import com.gravitas.settings.enums.OrientationOverlayMode;
+import com.gravitas.settings.enums.BodyVectorOverlayMode;
 
 public final class OverlaySettings {
 
@@ -11,13 +11,13 @@ public final class OverlaySettings {
     private static final OrbitOverlayMode DEFAULT_ORBIT_OVERLAY_MODE = OrbitOverlayMode.TRAILS_ONLY;
     private static final OrbitRenderMode DEFAULT_ORBIT_RENDER_MODE = OrbitRenderMode.CPU_DASHED_SIMPLE;
     private static final OrbitPredictorScope DEFAULT_ORBIT_PREDICTOR_SCOPE = OrbitPredictorScope.LOCAL;
-    private static final OrientationOverlayMode DEFAULT_ORIENTATION_OVERLAY_MODE = OrientationOverlayMode.NONE;
+    private static final BodyVectorOverlayMode DEFAULT_BODY_VECTOR_OVERLAY_MODE = BodyVectorOverlayMode.NONE;
 
     private boolean visualScaleMode;
     private OrbitOverlayMode orbitOverlayMode;
     private OrbitRenderMode orbitRenderMode;
     private OrbitPredictorScope orbitPredictorScope;
-    private OrientationOverlayMode orientationOverlayMode;
+    private BodyVectorOverlayMode bodyVectorOverlayMode;
 
     public OverlaySettings() {
         resetToDefaults();
@@ -28,7 +28,7 @@ public final class OverlaySettings {
         orbitOverlayMode = DEFAULT_ORBIT_OVERLAY_MODE;
         orbitRenderMode = OrbitRenderMode.resolveEnabled(DEFAULT_ORBIT_RENDER_MODE);
         orbitPredictorScope = DEFAULT_ORBIT_PREDICTOR_SCOPE;
-        orientationOverlayMode = DEFAULT_ORIENTATION_OVERLAY_MODE;
+        bodyVectorOverlayMode = DEFAULT_BODY_VECTOR_OVERLAY_MODE;
     }
 
     public boolean isVisualScaleMode() {
@@ -98,31 +98,31 @@ public final class OverlaySettings {
                 .next();
     }
 
-    public OrientationOverlayMode getOrientationOverlayMode() {
-        return orientationOverlayMode;
+    public BodyVectorOverlayMode getBodyVectorOverlayMode() {
+        return bodyVectorOverlayMode;
     }
 
-    public void setOrientationOverlayMode(OrientationOverlayMode orientationOverlayMode) {
-        this.orientationOverlayMode = orientationOverlayMode != null
-                ? orientationOverlayMode
-                : DEFAULT_ORIENTATION_OVERLAY_MODE;
+    public void setBodyVectorOverlayMode(BodyVectorOverlayMode bodyVectorOverlayMode) {
+        this.bodyVectorOverlayMode = bodyVectorOverlayMode != null
+                ? bodyVectorOverlayMode
+                : DEFAULT_BODY_VECTOR_OVERLAY_MODE;
     }
 
-    public void cycleOrientationOverlayMode() {
-        orientationOverlayMode = (orientationOverlayMode != null ? orientationOverlayMode
-                : DEFAULT_ORIENTATION_OVERLAY_MODE)
+    public void cycleBodyVectorOverlayMode() {
+        bodyVectorOverlayMode = (bodyVectorOverlayMode != null ? bodyVectorOverlayMode
+                : DEFAULT_BODY_VECTOR_OVERLAY_MODE)
                 .next();
     }
 
     public boolean isShowOrbitNormal() {
-        return orientationOverlayMode != null && orientationOverlayMode.showOrbitNormal();
+        return bodyVectorOverlayMode != null && bodyVectorOverlayMode.showOrbitNormal();
     }
 
     public boolean isShowSpinAxis() {
-        return orientationOverlayMode != null && orientationOverlayMode.showSpinAxis();
+        return bodyVectorOverlayMode != null && bodyVectorOverlayMode.showSpinAxis();
     }
 
     public boolean isShowPrimeMeridian() {
-        return orientationOverlayMode != null && orientationOverlayMode.showPrimeMeridian();
+        return bodyVectorOverlayMode != null && bodyVectorOverlayMode.showPrimeMeridian();
     }
 }

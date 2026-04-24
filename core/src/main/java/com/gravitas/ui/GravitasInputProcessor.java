@@ -18,6 +18,7 @@ import com.gravitas.settings.SimulationSettings;
 import com.gravitas.state.AppState;
 import com.gravitas.state.SimulationState;
 import com.gravitas.state.UiState;
+import com.gravitas.util.BodySelectionUtils;
 import com.gravitas.ui.settings.SettingsPanelController;
 import com.gravitas.ui.settings.SettingsPanelModel;
 import com.gravitas.ui.settings.WarpPresets;
@@ -270,14 +271,29 @@ public class GravitasInputProcessor extends InputAdapter {
     }
 
     /**
-     * FREE_CAM: ancestor wins over descendant when descendant is a small dot
-     * (screen radius < DOT_THRESHOLD_PX) AND both have comparable screen size
-     * (ratio > DOT_RATIO_MIN). Otherwise closest to camera wins.
+     * Extra padding for the tight body-disc shortlist.
+     * Lets small bodies beat their parent when visually separable.
      */
-    private static final float DOT_THRESHOLD_PX = 15f;
-    private static final float DOT_RATIO_MIN = 0.3f;
+    private static final float CLICK_HIT_EXTRA_PX = 8f;
+
+    /**
+     * Wide fallback click radius used when the tight shortlist finds nothing.
+     * Keeps tiny distant bodies easy to pick without making selection too sticky.
+     */
+    private static final float CLICK_HIT_RADIUS_PX = 30f;
 
     private CelestialBody findBodyAt3D(int screenX, int screenY) {
+        CelestialBody best = findBodyAt3D(screenX, screenY, true);
+        return best != null ? best : findBodyAt3D(screenX, screenY, false);
+    }
+
+    /**
+     * FREE_CAM: ancestor wins over descendant; otherwise nearest on screen wins.
+     * strictHitRadius=true → shortlist only bodies whose projected disc is
+     * actually near the click. false → fallback to the wider click
+     * radius so tiny distant dots remain selectable.
+     */
+    private CelestialBody findBodyAt3D(int screenX, int screenY, boolean strictHitRadius) {
         CelestialBody best = null;
         double bestDepth = Double.MAX_VALUE;
         float bestScreenR = 0;
@@ -289,25 +305,13 @@ public class GravitasInputProcessor extends InputAdapter {
             float bsy = Gdx.graphics.getHeight() - sc.y;
             float ddx = screenX - sc.x;
             float ddy = screenY - bsy;
-            if (ddx * ddx + ddy * ddy > 30 * 30)
+            float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z);
+            float hitRadius = strictHitRadius ? screenR + CLICK_HIT_EXTRA_PX : CLICK_HIT_RADIUS_PX;
+            if (ddx * ddx + ddy * ddy > hitRadius * hitRadius)
                 continue;
 
-            float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z);
             double depth = camera.depthOf(cb.x, cb.y, cb.z);
-            if (best == null) {
-                best = cb;
-                bestDepth = depth;
-                bestScreenR = screenR;
-            } else if (bestScreenR < DOT_THRESHOLD_PX && isAncestor(cb, best)
-                    && bestScreenR / (screenR + 1e-6f) > DOT_RATIO_MIN) {
-                // best is a small dot comparable in size to its ancestor → ancestor wins
-                best = cb;
-                bestDepth = depth;
-                bestScreenR = screenR;
-            } else if (screenR < DOT_THRESHOLD_PX && isAncestor(best, cb)
-                    && screenR / (bestScreenR + 1e-6f) > DOT_RATIO_MIN) {
-                // cb is a small dot comparable in size to its ancestor (best) → keep best
-            } else if (depth < bestDepth) {
+            if (BodySelectionUtils.shouldReplace3D(best, bestScreenR, bestDepth, cb, screenR, depth)) {
                 best = cb;
                 bestDepth = depth;
                 bestScreenR = screenR;
@@ -320,8 +324,17 @@ public class GravitasInputProcessor extends InputAdapter {
      * TOP_VIEW: ancestor wins over descendant; otherwise nearest on screen wins.
      */
     private CelestialBody findBodyAt2D(int screenX, int screenY) {
+        CelestialBody best = findBodyAt2D(screenX, screenY, true);
+        return best != null ? best : findBodyAt2D(screenX, screenY, false);
+    }
+
+    /**
+     * Same strict-first / wide-fallback shortlist policy used by FREE_CAM, but
+     * with TOP_VIEW tie-breaking once candidates are admitted.
+     */
+    private CelestialBody findBodyAt2D(int screenX, int screenY, boolean strictHitRadius) {
         CelestialBody best = null;
-        float bestDistSq = 30 * 30;
+        float bestDistSq = Float.MAX_VALUE;
 
         for (var obj : physics.getSimObjects()) {
             if (!(obj instanceof CelestialBody cb) || !cb.active)
@@ -331,35 +344,17 @@ public class GravitasInputProcessor extends InputAdapter {
             float ddx = screenX - sc.x;
             float ddy = screenY - bsy;
             float dSq = ddx * ddx + ddy * ddy;
-            if (dSq > 30 * 30)
+            float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z);
+            float hitRadius = strictHitRadius ? screenR + CLICK_HIT_EXTRA_PX : CLICK_HIT_RADIUS_PX;
+            if (dSq > hitRadius * hitRadius)
                 continue;
 
-            if (best == null) {
-                best = cb;
-                bestDistSq = dSq;
-            } else if (isAncestor(cb, best)) {
-                best = cb;
-                bestDistSq = dSq;
-            } else if (!isAncestor(best, cb) && dSq < bestDistSq) {
+            if (BodySelectionUtils.shouldReplace2D(best, bestDistSq, cb, dSq)) {
                 best = cb;
                 bestDistSq = dSq;
             }
         }
         return best;
-    }
-
-    /**
-     * Returns true if {@code ancestor} is a direct or indirect parent of
-     * {@code body}.
-     */
-    private static boolean isAncestor(CelestialBody ancestor, CelestialBody body) {
-        CelestialBody cur = body.parent;
-        while (cur != null) {
-            if (cur == ancestor)
-                return true;
-            cur = cur.parent;
-        }
-        return false;
     }
 
     /**

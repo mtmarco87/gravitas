@@ -17,6 +17,7 @@ import com.gravitas.rendering.core.CameraMode;
 import com.gravitas.rendering.core.WorldCamera;
 import com.gravitas.settings.SimulationSettings;
 import com.gravitas.settings.enums.SpinMode;
+import com.gravitas.util.BodySelectionUtils;
 import com.gravitas.util.FormatUtils;
 
 import java.util.ArrayList;
@@ -142,14 +143,6 @@ public class BodyTooltip {
         return findHovered2D(mouseX, mouseYFlipped, objects);
     }
 
-    /**
-     * FREE_CAM: ancestor wins over descendant when descendant is a small dot
-     * (screen radius < DOT_THRESHOLD_PX) AND both have comparable screen size
-     * (ratio > DOT_RATIO_MIN). Otherwise closest to camera wins.
-     */
-    private static final float DOT_THRESHOLD_PX = 15f;
-    private static final float DOT_RATIO_MIN = 0.3f;
-
     private SimObject findHovered3D(int mouseX, int mouseYFlipped, List<SimObject> objects) {
         CelestialBody best = null;
         double bestDepth = Double.MAX_VALUE;
@@ -165,20 +158,7 @@ public class BodyTooltip {
             if (dx * dx + dy * dy > (screenR + HOVER_EXTRA_PX) * (screenR + HOVER_EXTRA_PX))
                 continue;
             double depth = camera.depthOf(cb.x, cb.y, cb.z);
-            if (best == null) {
-                best = cb;
-                bestDepth = depth;
-                bestScreenR = screenR;
-            } else if (bestScreenR < DOT_THRESHOLD_PX && isAncestor(cb, best)
-                    && bestScreenR / (screenR + 1e-6f) > DOT_RATIO_MIN) {
-                // best is a small dot comparable in size to its ancestor → ancestor wins
-                best = cb;
-                bestDepth = depth;
-                bestScreenR = screenR;
-            } else if (screenR < DOT_THRESHOLD_PX && isAncestor(best, cb)
-                    && screenR / (bestScreenR + 1e-6f) > DOT_RATIO_MIN) {
-                // cb is a small dot comparable in size to its ancestor (best) → keep best
-            } else if (depth < bestDepth) {
+            if (BodySelectionUtils.shouldReplace3D(best, bestScreenR, bestDepth, cb, screenR, depth)) {
                 best = cb;
                 bestDepth = depth;
                 bestScreenR = screenR;
@@ -201,32 +181,15 @@ public class BodyTooltip {
             float screenR = camera.worldSphereRadiusToScreen(cb.radius, cb.x, cb.y, cb.z) + HOVER_EXTRA_PX;
             float dx = mouseX - sc.x;
             float dy = mouseYFlipped - sc.y;
-            float dist = (float) Math.sqrt(dx * dx + dy * dy);
-            if (dist > screenR)
+            float distSq = dx * dx + dy * dy;
+            if (distSq > screenR * screenR)
                 continue;
-            if (best == null) {
+            if (BodySelectionUtils.shouldReplace2D(best, bestDist, cb, distSq)) {
                 best = cb;
-                bestDist = dist;
-            } else if (isAncestor(cb, best)) {
-                // cb is a parent of current best → cb wins
-                best = cb;
-                bestDist = dist;
-            } else if (!isAncestor(best, cb) && dist < bestDist) {
-                best = cb;
-                bestDist = dist;
+                bestDist = distSq;
             }
         }
         return best;
-    }
-
-    private static boolean isAncestor(CelestialBody ancestor, CelestialBody body) {
-        CelestialBody cur = body.parent;
-        while (cur != null) {
-            if (cur == ancestor)
-                return true;
-            cur = cur.parent;
-        }
-        return false;
     }
 
     private TooltipContent buildTooltipContent(SimObject obj, boolean lockedTarget, boolean advancedOnly,

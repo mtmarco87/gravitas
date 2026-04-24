@@ -179,7 +179,7 @@ public class Gravitas extends ApplicationAdapter {
         // ShapeRenderer uses screen coords from the camera.
         shapeRenderer.setProjectionMatrix(worldCamera.getCamera().combined);
 
-        // 7. Render simulation and orbit overlays.
+        // 7. Render simulation and orbital overlays.
         double simDt = dt * physics.getTimeWarpFactor();
         simRenderer.render(simDt, orbitPredictor, physics.getTimeWarpFactor());
 

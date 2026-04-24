@@ -161,8 +161,8 @@ public final class SettingsPanelModel {
 
     private String overlayOptionLine(int index) {
         return switch (index) {
-            case 0 -> "1. Orbit Vectors [" + overlaySettings.getOrientationOverlayMode().hudLabel() + "]";
-            case 1 -> "2. Orbit Overlays [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
+            case 0 -> "1. Body Vectors [" + overlaySettings.getBodyVectorOverlayMode().hudLabel() + "]";
+            case 1 -> "2. Orbits [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
             case 2 -> "3. Orbit Style [" + overlaySettings.getOrbitRenderMode().hudLabel() + "]";
             case 3 -> "4. Orbit Scope [" + overlaySettings.getOrbitPredictorScope().hudLabel() + "]";
             case 4 -> "5. Visual Scale [" + (overlaySettings.isVisualScaleMode() ? "ON" : "OFF") + "]";

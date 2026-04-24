@@ -1,6 +1,10 @@
 package com.gravitas.settings.enums;
 
-public enum OrientationOverlayMode {
+/**
+ * Visibility presets for body-referenced vector overlays:
+ * orbital normal, spin axis, and prime meridian.
+ */
+public enum BodyVectorOverlayMode {
     NONE("NONE", false, false, false),
     ORBIT_NORMAL("NORMAL", true, false, false),
     SPIN_AXIS("AXIS", false, true, false),
@@ -12,7 +16,7 @@ public enum OrientationOverlayMode {
     private final boolean showSpinAxis;
     private final boolean showPrimeMeridian;
 
-    OrientationOverlayMode(String hudLabel,
+    BodyVectorOverlayMode(String hudLabel,
             boolean showOrbitNormal,
             boolean showSpinAxis,
             boolean showPrimeMeridian) {
@@ -38,7 +42,7 @@ public enum OrientationOverlayMode {
         return showPrimeMeridian;
     }
 
-    public OrientationOverlayMode next() {
+    public BodyVectorOverlayMode next() {
         return values()[(ordinal() + 1) % values().length];
     }
 }

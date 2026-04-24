@@ -336,7 +336,7 @@ public class HUD {
                 ? "Z: FOV [AUTO " + Math.round(cameraState.getCurrentFreeCamFov()) + "°]"
                 : "Z: FOV [FIX " + fixedFreeCamFovLabel() + "°]";
         String ffText = "P: Follow [" + cameraSettings.getFollowFrameMode().hudLabel() + "]";
-        String opText = "T: Overlays [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
+        String opText = "T: Orbits [" + overlaySettings.getOrbitOverlayMode().hudLabel() + "]";
         String fxText = "X: Settings [" + (uiState.getSettingsPanel().isOpen() ? "ON" : "OFF") + "]";
         String lgText = "H: Help [" + (uiState.isLegendVisible() ? "ON" : "OFF") + "]";
         String mtText = "M: Measure [" + (uiState.isMeasureActive() ? "ON" : "OFF") + "]";
@@ -376,7 +376,7 @@ public class HUD {
                 "Z            camera FOV 5/60/auto",
                 "R            reset camera",
                 "V            visual scale",
-                "T            orbit overlays",
+                "T            orbits",
                 "Y            orbit style",
                 "M            measure",
                 "X            settings",

@@ -539,6 +539,18 @@ public class WorldCamera {
     }
 
     public void startSmoothFollowTarget(SimObject target) {
+        SimObject currentTarget = getFollowTarget();
+        if (target != null) {
+            // Re-clicking the already locked target should not reopen the follow
+            // transition or briefly clear the locked-target UI state.
+            if (target == currentTarget) {
+                return;
+            }
+            if (followTargetTransitionActive && target == transitionFollowTarget) {
+                return;
+            }
+        }
+
         followTargetTransitionActive = false;
         followTargetTransitionElapsed = 0f;
         transitionFollowTarget = null;

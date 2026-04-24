@@ -440,7 +440,7 @@ public final class SettingsPanelController {
 
     private void activateOverlaySelection() {
         switch (settingsPanelState.getSelection(SettingsMenuPage.OVERLAYS)) {
-            case 0 -> overlaySettings.cycleOrientationOverlayMode();
+            case 0 -> overlaySettings.cycleBodyVectorOverlayMode();
             case 1 -> overlaySettings.cycleOrbitOverlayMode();
             case 2 -> overlaySettings.cycleOrbitRenderMode();
             case 3 -> overlaySettings.cycleOrbitPredictorScope();
