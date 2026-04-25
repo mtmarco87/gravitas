@@ -118,6 +118,18 @@ public final class FxSettings {
         return cloudCompositingMode;
     }
 
+    /**
+     * Adaptive cloud compositing only makes sense when cloud day/night lighting is
+     * active at the terminator. Without that split, fall back to the primary
+     * texture-led mode while keeping the selected preset unchanged in the UI.
+     */
+    public CloudCompositingMode getEffectiveCloudCompositingMode() {
+        if (cloudCompositingMode == CloudCompositingMode.ADAPTIVE && !isCloudDayNightActive()) {
+            return CloudCompositingMode.TEXTURE_DOMINANT;
+        }
+        return cloudCompositingMode;
+    }
+
     public void cycleCloudCompositingMode() {
         cloudCompositingMode = cloudCompositingMode.next();
     }

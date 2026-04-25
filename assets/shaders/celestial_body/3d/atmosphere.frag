@@ -8,9 +8,9 @@ precision mediump float;
 
 varying vec2 v_texCoord;
 
-uniform vec3 u_glowColor;
-uniform float u_intensity;
-uniform float u_innerRadius;
+uniform vec3 u_glowColor;     // atmosphere glow colour (RGB)
+uniform float u_intensity;     // overall glow intensity [0,1]
+uniform float u_innerRadius;   // planet disk radius as fraction of quad [0..1]
 uniform float u_isStar;
 uniform float u_denseAtmosphereFactor;
 uniform int u_atmosphereDayNightMode;

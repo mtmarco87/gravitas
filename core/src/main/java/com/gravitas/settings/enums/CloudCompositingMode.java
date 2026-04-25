@@ -3,7 +3,7 @@ package com.gravitas.settings.enums;
 public enum CloudCompositingMode {
     EQUAL_BLEND("BALANCED", 0),
     TEXTURE_DOMINANT("TEXTURE LED", 1),
-    ADAPTIVE("ADAPTIVE", 2);
+    ADAPTIVE("ADAPTIVE D/N", 2);
 
     private final String hudLabel;
     private final int shaderValue;

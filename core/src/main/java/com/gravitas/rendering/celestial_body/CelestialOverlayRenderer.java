@@ -409,7 +409,7 @@ final class CelestialOverlayRenderer {
         FxSettings settings = fxSettings != null ? fxSettings : new FxSettings();
         shader.setUniformi("u_cloudDayNightMode", settings.isCloudDayNightActive() ? 1 : 0);
         shader.setUniformi("u_cloudTerminatorMode", settings.getCloudTerminatorMode().shaderValue());
-        shader.setUniformi("u_cloudCompositingMode", settings.getCloudCompositingMode().shaderValue());
+        shader.setUniformi("u_cloudCompositingMode", settings.getEffectiveCloudCompositingMode().shaderValue());
         shader.setUniformf("u_cloudTextureAlphaWeight", settings.getCloudTextureAlphaWeight());
         shader.setUniformf("u_cloudProceduralAlphaWeight", settings.getCloudProceduralAlphaWeight());
         shader.setUniformf("u_cloudProceduralTextureCoupling", settings.getCloudProceduralTextureCoupling());
